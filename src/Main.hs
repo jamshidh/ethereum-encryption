@@ -26,6 +26,8 @@ import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
 import Blockchain.Format
 
+import UDP
+
 --import Debug.Trace
 
 intToBytes::Integer->[Word8]
@@ -63,6 +65,8 @@ sigToBytes (ExtendedSignature signature yIsOdd) =
 main::IO ()    
 main = do
 
+  serverPubKey <- getServerPubKey "127.0.0.1" 30303
+  
   handle <- connectTo "127.0.0.1" $ PortNumber 30303
 
   putStrLn "Connected"
@@ -71,7 +75,10 @@ main = do
   let theCurve = getCurveByName SEC_p256k1
       (myPriv, g') = generatePrivate g theCurve
       myPublic = calculatePublic theCurve myPriv
-      otherPublic = Point 0xc5190919a93e477bb980498971c222c76ac8774ca735b107b3a380decf598a8e 0x569d4c7e29773934ae370e5128fc06087883053de83ec20b1ee2640571a03176
+      H.PubKey point = serverPubKey
+      x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
+      y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
+      otherPublic = Point (fromIntegral x) (fromIntegral y) -- Point 0xc5190919a93e477bb980498971c222c76ac8774ca735b107b3a380decf598a8e 0x569d4c7e29773934ae370e5128fc06087883053de83ec20b1ee2640571a03176
       SharedKey sharedKey = getShared theCurve myPriv otherPublic
   
   putStrLn $ "priv: " ++ showHex myPriv ""

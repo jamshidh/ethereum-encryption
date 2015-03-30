@@ -1,3 +1,8 @@
+
+module UDP (
+  getServerPubKey
+  ) where
+
 import Network.Socket
 
 import Control.Exception
@@ -31,8 +36,6 @@ import Blockchain.Format
 import Blockchain.SHA
 
 import Debug.Trace
-
-port = "30303"
 
 integerToBytes::Integer->[Word8]
 integerToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
@@ -111,7 +114,7 @@ showPubKey (H.PubKey point) =
     
 showPubKey (H.PubKeyU _) = error "Missing case in showPubKey: PubKeyU"
 
-processDataStream'::[Word8]->IO ()
+processDataStream'::[Word8]->IO H.PubKey
 processDataStream'
   (h1:h2:h3:h4:h5:h6:h7:h8:h9:h10:h11:h12:h13:h14:h15:h16:
    h17:h18:h19:h20:h21:h22:h23:h24:h25:h26:h27:h28:h29:h30:h31:h32:
@@ -145,8 +148,10 @@ processDataStream'
 
 --  processDataStream' rest'
 
+  return publicKey
 
-processDataStream::BL.ByteString->IO ()
+
+processDataStream::BL.ByteString->IO H.PubKey
 {-processDataStream x = do
   putStrLn "got some data"
   let result = runGet get x
@@ -168,8 +173,8 @@ pubKeyToNodeID (H.PubKey point) =
 pubKeyToNodeID (H.PubKeyU _) = error "Missing case in pubKeyToNodeId: PubKeyU"
 
 
-main::IO ()
-main = do
+getServerPubKey::String->Word16->IO H.PubKey
+getServerPubKey domain port = do
 
   let theCurve = getCurveByName Crypto.Types.PubKey.ECC.SEC_p256k1
 
@@ -187,11 +192,12 @@ main = do
 
   withSocketsDo $ bracket getSocket hClose (talk prvKey)
         where getSocket = do
-                (serveraddr:_) <- getAddrInfo Nothing (Just "127.0.0.1") (Just port)
+                (serveraddr:_) <- getAddrInfo Nothing (Just domain) (Just $ show port)
                 s <- socket (addrFamily serveraddr) Datagram defaultProtocol
                 connect s (addrAddress serveraddr) >> return s
                 socketToHandle s ReadWriteMode
 
+              talk::H.PrvKey->Handle->IO H.PubKey
               talk prvKey h = do
                 let (theType, theRLP) = ndPacketToRLP $
                               Ping 3 "127.0.0.1" 4000 1451606400
@@ -213,4 +219,6 @@ main = do
                 --send s $ map w2c $ theHash ++ theSignature ++ theType ++ theData
                 --recv s 1024 >>= \msg -> putStrLn $ "Received " ++ msg
                 --B.hGet h 4 >>= \msg -> putStrLn $ "Received " ++ show msg
-                BL.hGetContents h >>= processDataStream
+                pubKey <- BL.hGetContents h >>= processDataStream
+
+                return pubKey

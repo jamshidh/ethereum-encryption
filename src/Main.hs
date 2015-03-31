@@ -153,12 +153,8 @@ main = do
 
   putStrLn $ "serverPubKey: Point " ++ show x ++ " " ++ show y
 
-  let key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
-      eKey = B.take 16 key
-      mKeyMaterial = B.take 16 $ B.drop 16 key
-      mKey = hash mKeyMaterial
+  let 
       cipherIV = 0::Word128
-      --msgMac = replicate 32 2
 
       nonce = 20::Word256
       msg = fromIntegral sharedKey `xor` nonce
@@ -173,24 +169,12 @@ main = do
       pubk = pointToBytes myPublic
       theData = sigToBytes sig ++ B.unpack hepubk ++ pubk ++ word256ToBytes nonce ++ [0] -- [1..306-64-16-32]
 
-      cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) $ B.pack theData
-      cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
-      mac =
-        hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) cipherWithIV
-
   putStrLn $ "sigToBytes sig: " ++ show (length $ sigToBytes sig) ++ " " ++ show (sigToBytes sig)
   putStrLn $ "B.unpack hepubk: " ++ show (length $ B.unpack hepubk) ++ ", " ++ show (B.unpack hepubk)
   putStrLn $ "pubk: " ++ show (length pubk) ++ ", " ++ show pubk
   putStrLn $ "word256ToBytes nonce: " ++ show (length $ word256ToBytes nonce) ++ ", " ++ show (word256ToBytes nonce)
 
-  let eceisMessage =
-        ECEISMessage {
-          eceisMysteryByte = 2,
-          eceisPubKey=myPublic,
-          eceisCipherIV=cipherIV,
-          eceisCipher=cipher,
-          eceisMac=mac
-          }
+  let eceisMessage = encryptECEIS myPriv otherPublic cipherIV $ B.pack theData 
 
   BL.hPut handle $ BL.pack $ eceisMsgToBytes eceisMessage
 

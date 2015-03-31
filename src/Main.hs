@@ -13,6 +13,7 @@ import Crypto.Random
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
+import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.HMAC
 import Data.Maybe
@@ -37,6 +38,18 @@ intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 pointToBytes::Point->[Word8]
 pointToBytes (Point x y) = intToBytes x ++ intToBytes y
 
+showPoint::Point->String
+showPoint (Point x y) =
+  "Point " ++ showHex x "" ++ " " ++ showHex y ""
+
+hShowPoint::H.Point->String
+hShowPoint point =
+  "Point " ++ showHex x "" ++ " " ++ showHex y ""
+  where
+    x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
+    y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
+
+
 ctr::[Word8]
 ctr=[0,0,0,1]
 
@@ -44,9 +57,6 @@ ctr=[0,0,0,1]
 
 s1::[Word8]
 s1 = []
-
-encrypt::B.ByteString->B.ByteString->B.ByteString->B.ByteString
-encrypt key cipherIV input = encryptCTR (initAES key) cipherIV input 
 
 hPointToBytes::H.Point->[Word8]
 hPointToBytes point =
@@ -94,7 +104,7 @@ eceisMsgToBytes msg =
   eceisMac msg
 
 bytesToECEISMsg::[Word8]->ECEISMessage
-bytesToECEISMsg (mysteryByte:rest) =
+bytesToECEISMsg (mysteryByte:rest) | cipherLen >= 0 =
   ECEISMessage {
     eceisMysteryByte=mysteryByte,
     eceisPubKey=bytesToPoint $ take 64 rest,
@@ -102,8 +112,29 @@ bytesToECEISMsg (mysteryByte:rest) =
     eceisCipher=B.pack $ take cipherLen $ drop 80 rest,
     eceisMac=drop (length rest - 32) rest
     }
-  where cipherLen = length rest - 64 - 16 - 3
+  where cipherLen = length rest - 64 - 16 - 32
 bytesToECEISMsg _ = error "empty byte list in call to bytesToECEISMsg"
+
+data AckMessage =
+  AckMessage {
+    ackEphemeralPubKey::Point,
+    ackNonce::Word256,
+    ackKnownPeer::Bool
+    } deriving (Show)
+
+bytesToAckMsg::[Word8]->AckMessage
+bytesToAckMsg bytes | length bytes == 97 =
+  AckMessage {
+    ackEphemeralPubKey=bytesToPoint $ take 64 bytes,
+    ackNonce=bytesToWord256 $ take 32 $ drop 64 bytes,
+    ackKnownPeer=case bytes !! 96 of 0 -> False;  1 -> True
+    }
+bytesToAckMsg _ = error "wrong number of bytes in call to bytesToECEISMsg"
+
+
+
+encrypt::B.ByteString->B.ByteString->B.ByteString->B.ByteString
+encrypt key cipherIV input = encryptCTR (initAES key) cipherIV input 
 
 encryptECEIS::PrivateNumber->PublicPoint->Word128->B.ByteString->ECEISMessage
 encryptECEIS myPrvKey otherPubKey cipherIV msg =
@@ -123,8 +154,13 @@ encryptECEIS myPrvKey otherPubKey cipherIV msg =
     cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) msg
     cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
 
-decryptECEIS::B.ByteString->B.ByteString
-decryptECEIS = undefined
+decryptECEIS::PrivateNumber->ECEISMessage->B.ByteString
+decryptECEIS myPrvKey msg =
+  decryptCTR (initAES eKey) (B.pack $ word128ToBytes $ eceisCipherIV msg) (eceisCipher msg)
+  where
+    SharedKey sharedKey = getShared theCurve myPrvKey (eceisPubKey msg)
+    key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
+    eKey = B.take 16 key
 
 
 main::IO ()    
@@ -149,9 +185,9 @@ main = do
   putStrLn $ "priv: " ++ showHex myPriv ""
   putStrLn $ "shared: " ++ showHex sharedKey ""
   let (Point x' y') = myPublic
-  putStrLn $ "public: Point " ++ showHex x' "" ++ " " ++ showHex y' ""
+  putStrLn $ "public: " ++ hShowPoint point
 
-  putStrLn $ "serverPubKey: Point " ++ show x ++ " " ++ show y
+  putStrLn $ "serverPubKey: " ++ showPoint otherPublic
 
   let 
       cipherIV = 0::Word128
@@ -178,9 +214,16 @@ main = do
 
   BL.hPut handle $ BL.pack $ eceisMsgToBytes eceisMessage
 
-  reply <- BL.hGet handle 386
+  --reply <- BL.hGet handle 386
+  reply <- BL.hGet handle 210
 
-  print $ bytesToECEISMsg $ BL.unpack reply
+  let replyECEISMsg = bytesToECEISMsg $ BL.unpack reply
+
+  let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
+
+  putStrLn $ "decrypted reply: " ++ show ackMsg
+  putStrLn $ "ackEphemeralPubKey: " ++ showPoint (ackEphemeralPubKey ackMsg)
+  putStrLn $ "ackNonce: " ++ showHex (ackNonce ackMsg) ""
 
   BL.hPut handle $ BL.pack $ replicate 100 0
 
@@ -195,11 +238,13 @@ main = do
       add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
       add _ _ = error "add called with ByteString of length not 32"
 
-      m_nonce=fst $ B16.decode "3aa096cda02fb611f59590e7e1f913a9943b371214483c05e4a34528d5762e6b"
-      m_remoteNonce=intToBytes $ fromIntegral nonce
+--      m_nonce=B.pack $ word256ToBytes nonce
+--      m_remoteNonce=word256ToBytes $ ackNonce ackMsg
+      m_remoteNonce=word256ToBytes nonce
+      m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
-      m_authCipher=fst $ B16.decode "02d68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28b8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52000000000000000000000000000000001a459d58e86fb0a74e3519cccb201d26e23f7a733b6187bfc7ece720d966329509fcd2f2dcd930c9d42aaf991270c8da7fa312bba42189c4ffff0c229eaaf60be6da018486c9dad3f0328a8f94e096aea2effb7796b26fe6ef1a3a1bd1502a6ebcca0300d113f24ccd2c007428654135e82d87007864c7fec3493e99cc1692748f55dee55d3480c68308d4f8734738e264c58b3743253ad83a955cac768ccaaca06fce24959a04aa1e2fe41874da3e772256cb9f24f1f8d231ba7779a9375e14a18bf379bf6e22e4e3c53d90ae06f79f19e0807b435ea045ec81ed02e9cc5973a3a1"
-      m_ackCipher=fst $ B16.decode "048af5d0207c418c5cd94bb83db97fa42bb230eab4f379fe26481c23b578b18f60261d20e24466ec9269da80c927bbb7a524a7669edf7547316ad9351f0d4b766e000000000000000000000000000000005593525c9c07aa4bd337fe6aa6a7d4e538f232b12f7de92ac21ea19699bae6cc70fee136f6b75f720a35b148f325e2853226c7d9bc0ecd6a46ccb9cd4f0c0d5c901ed195d122ebf027af7612cd6498aa9e71b04380fd7952df0c896de36b389fd48a604d962e6ed26da0c3608f0660478970dc6ce17c4def92dad6e1025eb7ed21"
+      m_authCipher=eceisCipher eceisMessage
+      m_ackCipher=eceisCipher replyECEISMsg
   
 {-
 m_remoteEphemeral=Point 0xd68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28 0xb8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52
@@ -210,6 +255,13 @@ m_ackCipher=fst $ B16.decode "048af5d0207c418c5cd94bb83db97fa42bb230eab4f379fe26
 secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
 -}
 
+  putStrLn $ "m_originated=" ++ show m_originated
+--  putStrLn $ "m_remoteEphemeral=" ++ show m_remoteEphemeral
+  putStrLn $ "m_nonce=" ++ BC.unpack (B16.encode m_nonce)
+  putStrLn $ "m_remoteNonce=" ++ BC.unpack (B16.encode $ B.pack m_remoteNonce)
+  putStrLn $ "m_authCipher=" ++ BC.unpack (B16.encode m_authCipher)
+  putStrLn $ "m_ackCipher=" ++ BC.unpack (B16.encode m_ackCipher)
+--  putStrLn $ "secret=0x" ++ showHex secret ""
 
 
   let 

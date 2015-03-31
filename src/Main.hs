@@ -4,7 +4,6 @@ module Main (
   main
   ) where
 
-import Control.Monad.IO.Class
 import Crypto.Cipher.AES
 import Crypto.Hash.SHA256
 import qualified Crypto.Hash.SHA3 as SHA3
@@ -24,12 +23,12 @@ import Numeric
 
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
-import Blockchain.Format
 
 import UDP
 
 --import Debug.Trace
 
+theCurve::Curve
 theCurve = getCurveByName SEC_p256k1
 
 intToBytes::Integer->[Word8]
@@ -38,10 +37,12 @@ intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 pointToBytes::Point->[Word8]
 pointToBytes (Point x y) = intToBytes x ++ intToBytes y
 
+ctr::[Word8]
 ctr=[0,0,0,1]
 
 --z = replicate 32 0
 
+s1::[Word8]
 s1 = []
 
 encrypt::B.ByteString->B.ByteString->B.ByteString->B.ByteString
@@ -56,11 +57,12 @@ hPointToBytes point =
 
 pubKeyToBytes::H.PubKey->[Word8]
 pubKeyToBytes (H.PubKey point) = hPointToBytes point
-pubKeyToByteString (H.PubKeyU _) = error "Missing case in showPubKey: PubKeyU"
+pubKeyToBytes (H.PubKeyU _) = error "Missing case in showPubKey: PubKeyU"
 
 bytesToPoint::[Word8]->Point
 bytesToPoint x | length x == 64 =
   Point (toInteger $ bytesToWord256 $ take 32 x) (toInteger $ bytesToWord256 $ drop 32 x)
+bytesToPoint _ = error "bytesToPoint called with the wrong number of bytes"
 
 
 sigToBytes::ExtendedSignature->[Word8]
@@ -72,6 +74,7 @@ sigToBytes (ExtendedSignature signature yIsOdd) =
 bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y =
   B.pack $ map (uncurry xor) $ zip (B.unpack x) (B.unpack y) 
+bXor _ _ = error "bXor called with two ByteStrings of different length"
 
 data ECEISMessage =
   ECEISMessage {
@@ -91,7 +94,7 @@ eceisMsgToBytes msg =
   eceisMac msg
 
 bytesToECEISMsg::[Word8]->ECEISMessage
-bytesToECEISMsg (mysteryByte:rest)=
+bytesToECEISMsg (mysteryByte:rest) =
   ECEISMessage {
     eceisMysteryByte=mysteryByte,
     eceisPubKey=bytesToPoint $ take 64 rest,
@@ -99,7 +102,8 @@ bytesToECEISMsg (mysteryByte:rest)=
     eceisCipher=B.pack $ take cipherLen $ drop 80 rest,
     eceisMac=drop (length rest - 32) rest
     }
-  where cipherLen = length rest - 64 - 16 - 32
+  where cipherLen = length rest - 64 - 16 - 3
+bytesToECEISMsg _ = error "empty byte list in call to bytesToECEISMsg"
 
 encryptECEIS::PrivateNumber->PublicPoint->Word128->B.ByteString->ECEISMessage
 encryptECEIS myPrvKey otherPubKey cipherIV msg =
@@ -116,7 +120,6 @@ encryptECEIS myPrvKey otherPubKey cipherIV msg =
     eKey = B.take 16 key
     mKeyMaterial = B.take 16 $ B.drop 16 key
     mKey = hash mKeyMaterial
-    nonce = 20::Word256
     cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) msg
     cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
 
@@ -145,8 +148,8 @@ main = do
   
   putStrLn $ "priv: " ++ showHex myPriv ""
   putStrLn $ "shared: " ++ showHex sharedKey ""
-  let (Point x y) = myPublic
-  putStrLn $ "public: Point " ++ showHex x "" ++ " " ++ showHex y ""
+  let (Point x' y') = myPublic
+  putStrLn $ "public: Point " ++ showHex x' "" ++ " " ++ showHex y' ""
 
   putStrLn $ "serverPubKey: Point " ++ show x ++ " " ++ show y
 
@@ -205,7 +208,8 @@ main = do
 
   let m_originated=False
       add::B.ByteString->B.ByteString->B.ByteString
-      add acc x | B.length acc ==32 && B.length x == 32 = SHA3.hash 256 $ x `B.append` acc
+      add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
+      add _ _ = error "add called with ByteString of length not 32"
 
       m_nonce=fst $ B16.decode "3aa096cda02fb611f59590e7e1f913a9943b371214483c05e4a34528d5762e6b"
       m_remoteNonce=intToBytes $ fromIntegral nonce
@@ -224,8 +228,7 @@ secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
 
 
 
-  let nonceHash = SHA3.hash 256 $ m_nonce `B.append` (B.pack m_remoteNonce)
-
+  let 
 --      SharedKey shared' = getShared theCurve secret m_remoteEphemeral
       shared = B.pack $ intToBytes sharedKey
 

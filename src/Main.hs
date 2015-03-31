@@ -30,6 +30,8 @@ import UDP
 
 --import Debug.Trace
 
+theCurve = getCurveByName SEC_p256k1
+
 intToBytes::Integer->[Word8]
 intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 
@@ -94,10 +96,32 @@ bytesToECEISMsg (mysteryByte:rest)=
     eceisMysteryByte=mysteryByte,
     eceisPubKey=bytesToPoint $ take 64 rest,
     eceisCipherIV=bytesToWord128 $ take 16 $ drop 64 rest,
-    eceisCipher=B.pack $ take 81 $ drop 80 rest,
-    eceisMac=drop 274 rest
+    eceisCipher=B.pack $ take cipherLen $ drop 80 rest,
+    eceisMac=drop (length rest - 32) rest
     }
+  where cipherLen = length rest - 64 - 16 - 32
 
+encryptECEIS::PrivateNumber->PublicPoint->Word128->B.ByteString->ECEISMessage
+encryptECEIS myPrvKey otherPubKey cipherIV msg =
+  ECEISMessage {
+    eceisMysteryByte = 2,
+    eceisPubKey=calculatePublic theCurve myPrvKey,
+    eceisCipherIV=cipherIV,
+    eceisCipher=cipher,
+    eceisMac=hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) cipherWithIV
+    }
+  where
+    SharedKey sharedKey = getShared theCurve myPrvKey otherPubKey
+    key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
+    eKey = B.take 16 key
+    mKeyMaterial = B.take 16 $ B.drop 16 key
+    mKey = hash mKeyMaterial
+    nonce = 20::Word256
+    cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) msg
+    cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
+
+decryptECEIS::B.ByteString->B.ByteString
+decryptECEIS = undefined
 
 
 main::IO ()    
@@ -110,7 +134,7 @@ main = do
   putStrLn "Connected"
   entropyPool <- createEntropyPool
   let g = cprgCreate entropyPool :: SystemRNG
-  let theCurve = getCurveByName SEC_p256k1
+  let 
       (myPriv, g') = generatePrivate g theCurve
       myPublic = calculatePublic theCurve myPriv
       H.PubKey point = serverPubKey

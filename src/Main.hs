@@ -56,6 +56,11 @@ pubKeyToBytes::H.PubKey->[Word8]
 pubKeyToBytes (H.PubKey point) = hPointToBytes point
 pubKeyToByteString (H.PubKeyU _) = error "Missing case in showPubKey: PubKeyU"
 
+bytesToPoint::[Word8]->Point
+bytesToPoint x | length x == 64 =
+  Point (toInteger $ bytesToWord256 $ take 32 x) (toInteger $ bytesToWord256 $ drop 32 x)
+
+
 sigToBytes::ExtendedSignature->[Word8]
 sigToBytes (ExtendedSignature signature yIsOdd) =
   word256ToBytes (fromIntegral $ H.sigR signature) ++
@@ -73,10 +78,28 @@ data AMessage =
     msgCipherIV::Word128,
     msgCipher::B.ByteString,
     msgMac::[Word8]
+    } deriving (Show)
+
+msgToBytes::AMessage->[Word8]
+msgToBytes msg =
+  [msgMysteryByte msg] ++
+  pointToBytes (msgPubKey msg) ++
+  word128ToBytes (msgCipherIV msg) ++
+  B.unpack (msgCipher msg) ++
+  msgMac msg
+
+bytesToMsg::[Word8]->AMessage
+bytesToMsg (mysteryByte:rest)=
+  AMessage {
+    msgMysteryByte=mysteryByte,
+    msgPubKey=bytesToPoint $ take 64 rest,
+    msgCipherIV=bytesToWord128 $ take 16 $ drop 64 rest,
+    msgCipher=B.pack $ take 81 $ drop 80 rest,
+    msgMac=drop 274 rest
     }
 
 
- 
+
 main::IO ()    
 main = do
 
@@ -101,11 +124,13 @@ main = do
   let (Point x y) = myPublic
   putStrLn $ "public: Point " ++ showHex x "" ++ " " ++ showHex y ""
 
+  putStrLn $ "serverPubKey: Point " ++ show x ++ " " ++ show y
+
   let key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
       eKey = B.take 16 key
       mKeyMaterial = B.take 16 $ B.drop 16 key
       mKey = hash mKeyMaterial
-      cipherIV = replicate 16 0
+      cipherIV = 0::Word128
       --msgMac = replicate 32 2
 
       nonce = 20::Word256
@@ -121,8 +146,8 @@ main = do
       pubk = pointToBytes myPublic
       theData = sigToBytes sig ++ B.unpack hepubk ++ pubk ++ word256ToBytes nonce ++ [0] -- [1..306-64-16-32]
 
-      cipher = B.unpack $ encrypt eKey (B.pack cipherIV) $ B.pack theData
-      cipherWithIV = cipherIV ++ cipher
+      cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) $ B.pack theData
+      cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
       mac =
         hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) cipherWithIV
 
@@ -131,13 +156,20 @@ main = do
   putStrLn $ "pubk: " ++ show (length pubk) ++ ", " ++ show pubk
   putStrLn $ "word256ToBytes nonce: " ++ show (length $ word256ToBytes nonce) ++ ", " ++ show (word256ToBytes nonce)
 
+  let aMessage =
+        AMessage {
+          msgMysteryByte = 2,
+          msgPubKey=myPublic,
+          msgCipherIV=cipherIV,
+          msgCipher=cipher,
+          msgMac=mac
+          }
 
-  
-  BL.hPut handle $ BL.pack $ [2] ++ pointToBytes myPublic ++ cipherIV ++ cipher ++ mac
+  BL.hPut handle $ BL.pack $ msgToBytes aMessage
 
-  qqqq <- BL.hGet handle 386
+  reply <- BL.hGet handle 386
 
-  print qqqq
+  print $ bytesToMsg $ BL.unpack reply
 
   BL.hPut handle $ BL.pack $ replicate 100 0
 

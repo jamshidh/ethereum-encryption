@@ -62,6 +62,21 @@ sigToBytes (ExtendedSignature signature yIsOdd) =
   word256ToBytes (fromIntegral $ H.sigS signature) ++
   [if yIsOdd then 1 else 0]
 
+bXor::B.ByteString->B.ByteString->B.ByteString
+bXor x y | B.length x == B.length y =
+  B.pack $ map (uncurry xor) $ zip (B.unpack x) (B.unpack y) 
+
+data AMessage =
+  AMessage {
+    msgMysteryByte::Word8,
+    msgPubKey::Point,
+    msgCipherIV::Word128,
+    msgCipher::B.ByteString,
+    msgMac::[Word8]
+    }
+
+
+ 
 main::IO ()    
 main = do
 
@@ -78,7 +93,7 @@ main = do
       H.PubKey point = serverPubKey
       x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
       y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
-      otherPublic = Point (fromIntegral x) (fromIntegral y) -- Point 0xc5190919a93e477bb980498971c222c76ac8774ca735b107b3a380decf598a8e 0x569d4c7e29773934ae370e5128fc06087883053de83ec20b1ee2640571a03176
+      otherPublic = Point (fromIntegral x) (fromIntegral y)
       SharedKey sharedKey = getShared theCurve myPriv otherPublic
   
   putStrLn $ "priv: " ++ showHex myPriv ""
@@ -130,3 +145,56 @@ main = do
 
   print qqqq
 
+------------------------------
+
+  let m_originated=False
+      add::B.ByteString->B.ByteString->B.ByteString
+      add acc x | B.length acc ==32 && B.length x == 32 = SHA3.hash 256 $ x `B.append` acc
+
+      m_nonce=fst $ B16.decode "3aa096cda02fb611f59590e7e1f913a9943b371214483c05e4a34528d5762e6b"
+      m_remoteNonce=intToBytes $ fromIntegral nonce
+
+      m_authCipher=fst $ B16.decode "02d68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28b8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52000000000000000000000000000000001a459d58e86fb0a74e3519cccb201d26e23f7a733b6187bfc7ece720d966329509fcd2f2dcd930c9d42aaf991270c8da7fa312bba42189c4ffff0c229eaaf60be6da018486c9dad3f0328a8f94e096aea2effb7796b26fe6ef1a3a1bd1502a6ebcca0300d113f24ccd2c007428654135e82d87007864c7fec3493e99cc1692748f55dee55d3480c68308d4f8734738e264c58b3743253ad83a955cac768ccaaca06fce24959a04aa1e2fe41874da3e772256cb9f24f1f8d231ba7779a9375e14a18bf379bf6e22e4e3c53d90ae06f79f19e0807b435ea045ec81ed02e9cc5973a3a1"
+      m_ackCipher=fst $ B16.decode "048af5d0207c418c5cd94bb83db97fa42bb230eab4f379fe26481c23b578b18f60261d20e24466ec9269da80c927bbb7a524a7669edf7547316ad9351f0d4b766e000000000000000000000000000000005593525c9c07aa4bd337fe6aa6a7d4e538f232b12f7de92ac21ea19699bae6cc70fee136f6b75f720a35b148f325e2853226c7d9bc0ecd6a46ccb9cd4f0c0d5c901ed195d122ebf027af7612cd6498aa9e71b04380fd7952df0c896de36b389fd48a604d962e6ed26da0c3608f0660478970dc6ce17c4def92dad6e1025eb7ed21"
+  
+{-
+m_remoteEphemeral=Point 0xd68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28 0xb8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52
+m_nonce=fst $ B16.decode "3aa096cda02fb611f59590e7e1f913a9943b371214483c05e4a34528d5762e6b"
+m_remoteNonce=fst $ B16.decode "0000000000000000000000000000000000000000000000000000000000000014"
+m_authCipher=fst $ B16.decode "02d68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28b8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52000000000000000000000000000000001a459d58e86fb0a74e3519cccb201d26e23f7a733b6187bfc7ece720d966329509fcd2f2dcd930c9d42aaf991270c8da7fa312bba42189c4ffff0c229eaaf60be6da018486c9dad3f0328a8f94e096aea2effb7796b26fe6ef1a3a1bd1502a6ebcca0300d113f24ccd2c007428654135e82d87007864c7fec3493e99cc1692748f55dee55d3480c68308d4f8734738e264c58b3743253ad83a955cac768ccaaca06fce24959a04aa1e2fe41874da3e772256cb9f24f1f8d231ba7779a9375e14a18bf379bf6e22e4e3c53d90ae06f79f19e0807b435ea045ec81ed02e9cc5973a3a1"
+m_ackCipher=fst $ B16.decode "048af5d0207c418c5cd94bb83db97fa42bb230eab4f379fe26481c23b578b18f60261d20e24466ec9269da80c927bbb7a524a7669edf7547316ad9351f0d4b766e000000000000000000000000000000005593525c9c07aa4bd337fe6aa6a7d4e538f232b12f7de92ac21ea19699bae6cc70fee136f6b75f720a35b148f325e2853226c7d9bc0ecd6a46ccb9cd4f0c0d5c901ed195d122ebf027af7612cd6498aa9e71b04380fd7952df0c896de36b389fd48a604d962e6ed26da0c3608f0660478970dc6ce17c4def92dad6e1025eb7ed21"
+secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
+-}
+
+
+
+  let nonceHash = SHA3.hash 256 $ m_nonce `B.append` (B.pack m_remoteNonce)
+
+--      SharedKey shared' = getShared theCurve secret m_remoteEphemeral
+      shared = B.pack $ intToBytes sharedKey
+
+
+  let macEncKey = 
+        (B.pack m_remoteNonce) `add`
+        m_nonce `add`
+        shared `add`
+        shared `add`
+        shared
+
+      egressCipher = if m_originated then m_authCipher else m_ackCipher
+      ingressCipher = if m_originated then m_ackCipher else m_authCipher
+
+
+  let egressMac = SHA3.update (SHA3.init 256) $
+                   (macEncKey `bXor` (B.pack m_remoteNonce)) `B.append` egressCipher
+
+  let ingressMac = SHA3.update (SHA3.init 256) $ 
+                    (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
+
+
+  print $ B16.encode $ (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
+
+
+  print $ B16.encode macEncKey
+  print $ B16.encode $ SHA3.finalize egressMac
+  print $ B16.encode $ SHA3.finalize ingressMac

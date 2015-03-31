@@ -71,31 +71,31 @@ bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y =
   B.pack $ map (uncurry xor) $ zip (B.unpack x) (B.unpack y) 
 
-data AMessage =
-  AMessage {
-    msgMysteryByte::Word8,
-    msgPubKey::Point,
-    msgCipherIV::Word128,
-    msgCipher::B.ByteString,
-    msgMac::[Word8]
+data ECEISMessage =
+  ECEISMessage {
+    eceisMysteryByte::Word8,
+    eceisPubKey::Point,
+    eceisCipherIV::Word128,
+    eceisCipher::B.ByteString,
+    eceisMac::[Word8]
     } deriving (Show)
 
-msgToBytes::AMessage->[Word8]
-msgToBytes msg =
-  [msgMysteryByte msg] ++
-  pointToBytes (msgPubKey msg) ++
-  word128ToBytes (msgCipherIV msg) ++
-  B.unpack (msgCipher msg) ++
-  msgMac msg
+eceisMsgToBytes::ECEISMessage->[Word8]
+eceisMsgToBytes msg =
+  [eceisMysteryByte msg] ++
+  pointToBytes (eceisPubKey msg) ++
+  word128ToBytes (eceisCipherIV msg) ++
+  B.unpack (eceisCipher msg) ++
+  eceisMac msg
 
-bytesToMsg::[Word8]->AMessage
-bytesToMsg (mysteryByte:rest)=
-  AMessage {
-    msgMysteryByte=mysteryByte,
-    msgPubKey=bytesToPoint $ take 64 rest,
-    msgCipherIV=bytesToWord128 $ take 16 $ drop 64 rest,
-    msgCipher=B.pack $ take 81 $ drop 80 rest,
-    msgMac=drop 274 rest
+bytesToECEISMsg::[Word8]->ECEISMessage
+bytesToECEISMsg (mysteryByte:rest)=
+  ECEISMessage {
+    eceisMysteryByte=mysteryByte,
+    eceisPubKey=bytesToPoint $ take 64 rest,
+    eceisCipherIV=bytesToWord128 $ take 16 $ drop 64 rest,
+    eceisCipher=B.pack $ take 81 $ drop 80 rest,
+    eceisMac=drop 274 rest
     }
 
 
@@ -156,20 +156,20 @@ main = do
   putStrLn $ "pubk: " ++ show (length pubk) ++ ", " ++ show pubk
   putStrLn $ "word256ToBytes nonce: " ++ show (length $ word256ToBytes nonce) ++ ", " ++ show (word256ToBytes nonce)
 
-  let aMessage =
-        AMessage {
-          msgMysteryByte = 2,
-          msgPubKey=myPublic,
-          msgCipherIV=cipherIV,
-          msgCipher=cipher,
-          msgMac=mac
+  let eceisMessage =
+        ECEISMessage {
+          eceisMysteryByte = 2,
+          eceisPubKey=myPublic,
+          eceisCipherIV=cipherIV,
+          eceisCipher=cipher,
+          eceisMac=mac
           }
 
-  BL.hPut handle $ BL.pack $ msgToBytes aMessage
+  BL.hPut handle $ BL.pack $ eceisMsgToBytes eceisMessage
 
   reply <- BL.hGet handle 386
 
-  print $ bytesToMsg $ BL.unpack reply
+  print $ bytesToECEISMsg $ BL.unpack reply
 
   BL.hPut handle $ BL.pack $ replicate 100 0
 

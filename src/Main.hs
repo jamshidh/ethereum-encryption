@@ -243,8 +243,11 @@ main = do
       m_remoteNonce=word256ToBytes nonce
       m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
-      m_authCipher=eceisCipher eceisMessage
-      m_ackCipher=eceisCipher replyECEISMsg
+--      m_authCipher=B.pack theData --eceisCipher eceisMessage
+--      m_ackCipher=decryptECEIS myPriv replyECEISMsg -- eceisCipher replyECEISMsg
+  
+      m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
+      m_ackCipher=BL.toStrict reply
   
 {-
 m_remoteEphemeral=Point 0xd68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28 0xb8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52
@@ -266,9 +269,14 @@ secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
 
   let 
 --      SharedKey shared' = getShared theCurve secret m_remoteEphemeral
-      shared = B.pack $ intToBytes sharedKey
+      SharedKey shared' = getShared theCurve myPriv (ackEphemeralPubKey ackMsg)
+      shared = B.pack $ intToBytes shared'
 
+  putStrLn $ "server public: " ++ showPoint (eceisPubKey replyECEISMsg)
+  putStrLn $ "myPublic=" ++ showPoint myPublic
+  putStrLn $ "shared=0x" ++ BC.unpack (B16.encode shared)
 
+  
   let macEncKey = 
         (B.pack m_remoteNonce) `add`
         m_nonce `add`
@@ -289,6 +297,7 @@ secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
 
   print $ B16.encode $ (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
 
+  print $ B16.encode $ (B.pack m_remoteNonce) `add` m_nonce
 
   print $ B16.encode macEncKey
   print $ B16.encode $ SHA3.finalize egressMac

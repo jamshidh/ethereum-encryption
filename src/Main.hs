@@ -225,11 +225,6 @@ main = do
   putStrLn $ "ackEphemeralPubKey: " ++ showPoint (ackEphemeralPubKey ackMsg)
   putStrLn $ "ackNonce: " ++ showHex (ackNonce ackMsg) ""
 
-  BL.hPut handle $ BL.pack $ replicate 100 0
-
-  qqqq <- BL.hGet handle 386
-
-  print qqqq
 
 ------------------------------
 
@@ -238,25 +233,12 @@ main = do
       add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
       add _ _ = error "add called with ByteString of length not 32"
 
---      m_nonce=B.pack $ word256ToBytes nonce
---      m_remoteNonce=word256ToBytes $ ackNonce ackMsg
       m_remoteNonce=word256ToBytes nonce
       m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
---      m_authCipher=B.pack theData --eceisCipher eceisMessage
---      m_ackCipher=decryptECEIS myPriv replyECEISMsg -- eceisCipher replyECEISMsg
-  
       m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
       m_ackCipher=BL.toStrict reply
   
-{-
-m_remoteEphemeral=Point 0xd68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28 0xb8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52
-m_nonce=fst $ B16.decode "3aa096cda02fb611f59590e7e1f913a9943b371214483c05e4a34528d5762e6b"
-m_remoteNonce=fst $ B16.decode "0000000000000000000000000000000000000000000000000000000000000014"
-m_authCipher=fst $ B16.decode "02d68cf5d5268e8fa3abf5e235b749dc9255b29fb8f200d7ff1aa382a6656ecd28b8f4baa263d2c01b2dd1f33e8ab7b37095a9d525f50a2f84c9cf5ec778ba2d52000000000000000000000000000000001a459d58e86fb0a74e3519cccb201d26e23f7a733b6187bfc7ece720d966329509fcd2f2dcd930c9d42aaf991270c8da7fa312bba42189c4ffff0c229eaaf60be6da018486c9dad3f0328a8f94e096aea2effb7796b26fe6ef1a3a1bd1502a6ebcca0300d113f24ccd2c007428654135e82d87007864c7fec3493e99cc1692748f55dee55d3480c68308d4f8734738e264c58b3743253ad83a955cac768ccaaca06fce24959a04aa1e2fe41874da3e772256cb9f24f1f8d231ba7779a9375e14a18bf379bf6e22e4e3c53d90ae06f79f19e0807b435ea045ec81ed02e9cc5973a3a1"
-m_ackCipher=fst $ B16.decode "048af5d0207c418c5cd94bb83db97fa42bb230eab4f379fe26481c23b578b18f60261d20e24466ec9269da80c927bbb7a524a7669edf7547316ad9351f0d4b766e000000000000000000000000000000005593525c9c07aa4bd337fe6aa6a7d4e538f232b12f7de92ac21ea19699bae6cc70fee136f6b75f720a35b148f325e2853226c7d9bc0ecd6a46ccb9cd4f0c0d5c901ed195d122ebf027af7612cd6498aa9e71b04380fd7952df0c896de36b389fd48a604d962e6ed26da0c3608f0660478970dc6ce17c4def92dad6e1025eb7ed21"
-secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
--}
 
   putStrLn $ "m_originated=" ++ show m_originated
 --  putStrLn $ "m_remoteEphemeral=" ++ show m_remoteEphemeral
@@ -284,6 +266,12 @@ secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
         shared `add`
         shared
 
+  let frameDecKey = 
+        (B.pack m_remoteNonce) `add`
+        m_nonce `add`
+        shared `add`
+        shared
+
       egressCipher = if m_originated then m_authCipher else m_ackCipher
       ingressCipher = if m_originated then m_ackCipher else m_authCipher
 
@@ -294,11 +282,39 @@ secret=0xdfb39de778d7454cecc098a494220a8993dbd9a8ea059a8e628b3d4f9197862b
   let ingressMac = SHA3.update (SHA3.init 256) $ 
                     (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
 
+  let frameSize = 1024::Integer
 
-  print $ B16.encode $ (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
+  let thing = encryptCTR (initAES frameDecKey) (B.replicate 16 0) $
+               B.pack [fromIntegral $ frameSize `shiftR` 16, fromIntegral $ frameSize `shiftR` 8, fromIntegral frameSize,
+                       1,1,1,1,1,1,1,1,1,1,1,1,1]
+    
+      ingressMac' = SHA3.update ingressMac $ thing `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
 
-  print $ B16.encode $ (B.pack m_remoteNonce) `add` m_nonce
+      thing2 = B.take 16 $ SHA3.finalize ingressMac'
 
-  print $ B16.encode macEncKey
-  print $ B16.encode $ SHA3.finalize egressMac
-  print $ B16.encode $ SHA3.finalize ingressMac
+  B.hPut handle $ thing `B.append` thing2
+
+  qqqq <- BL.hGet handle 176
+
+  --print qqqq
+
+  putStrLn "============================"
+
+
+  let payloadData = B.replicate (16*(ceiling (fromIntegral frameSize/16.0))) 0
+      oldDigest = B.take 16 $ SHA3.finalize ingressMac''
+      prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
+      preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
+      updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
+      ingressMac'' = SHA3.update ingressMac' payloadData
+      ingressMac''' = SHA3.update ingressMac'' updateData
+      thing2' = B.take 16 $ SHA3.finalize ingressMac'''
+      payload = payloadData `B.append` thing2'
+
+  B.hPut handle payload
+
+  qqqq <- BL.hGet handle 176
+
+  --print qqqq
+
+  return ()

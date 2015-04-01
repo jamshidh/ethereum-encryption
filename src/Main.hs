@@ -285,19 +285,20 @@ main = do
 -------------------------------
 
 
-  let payloadData = B.pack [0..100]
-      frameSize = B.length payloadData
-      bufferedPayloadData = payloadData `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - B.length payloadData) 0
+  let frameData = B.pack [0x80]
+      frameCipher = encryptCTR (initAES frameDecKey) (B.replicate 16 0) frameData
+      frameSize = B.length frameCipher
+      bufferedCipherData = frameCipher `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
 
-  let thing = encryptCTR (initAES frameDecKey) (B.replicate 16 0) $
+  let headerData = encryptCTR (initAES frameDecKey) (B.replicate 16 0) $
                B.pack [fromIntegral $ frameSize `shiftR` 16, fromIntegral $ frameSize `shiftR` 8, fromIntegral frameSize,
                        1,1,1,1,1,1,1,1,1,1,1,1,1]
     
-      ingressMac' = SHA3.update ingressMac $ thing `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
+      ingressMac' = SHA3.update ingressMac $ headerData `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
 
       thing2 = B.take 16 $ SHA3.finalize ingressMac'
 
-  B.hPut handle $ thing `B.append` thing2
+  B.hPut handle $ headerData `B.append` thing2
 
   qqqq <- BL.hGet handle 176
 
@@ -313,10 +314,10 @@ main = do
       prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
       preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
       updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
-      ingressMac'' = SHA3.update ingressMac' bufferedPayloadData
+      ingressMac'' = SHA3.update ingressMac' bufferedCipherData
       ingressMac''' = SHA3.update ingressMac'' updateData
       thing2' = B.take 16 $ SHA3.finalize ingressMac'''
-      payload = bufferedPayloadData `B.append` thing2'
+      payload = bufferedCipherData `B.append` thing2'
 
   B.hPut handle payload
 

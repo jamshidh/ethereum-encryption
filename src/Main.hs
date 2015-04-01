@@ -282,7 +282,12 @@ main = do
   let ingressMac = SHA3.update (SHA3.init 256) $ 
                     (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
 
-  let frameSize = 1024::Integer
+-------------------------------
+
+
+  let payloadData = B.pack [0..100]
+      frameSize = B.length payloadData
+      bufferedPayloadData = payloadData `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - B.length payloadData) 0
 
   let thing = encryptCTR (initAES frameDecKey) (B.replicate 16 0) $
                B.pack [fromIntegral $ frameSize `shiftR` 16, fromIntegral $ frameSize `shiftR` 8, fromIntegral frameSize,
@@ -301,15 +306,17 @@ main = do
   putStrLn "============================"
 
 
-  let payloadData = B.replicate (16*(ceiling (fromIntegral frameSize/16.0))) 0
+  let 
+
+      
       oldDigest = B.take 16 $ SHA3.finalize ingressMac''
       prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
       preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
       updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
-      ingressMac'' = SHA3.update ingressMac' payloadData
+      ingressMac'' = SHA3.update ingressMac' bufferedPayloadData
       ingressMac''' = SHA3.update ingressMac'' updateData
       thing2' = B.take 16 $ SHA3.finalize ingressMac'''
-      payload = payloadData `B.append` thing2'
+      payload = bufferedPayloadData `B.append` thing2'
 
   B.hPut handle payload
 

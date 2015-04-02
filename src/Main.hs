@@ -286,8 +286,8 @@ main = do
 -------------------------------
 
 
-  let frameData = B.pack [0x80]
-      bufferedFrameData = frameData `B.append` B.pack [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+  let frameData = B.pack [0x80, 0x80]
+      bufferedFrameData = frameData `B.append` B.replicate ((16 - (B.length frameData `mod` 16)) `mod` 16) 0
       state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
       (state'', frameCipher) = AES.encrypt state' bufferedFrameData
       frameSize = 16::Integer --B.length frameCipher

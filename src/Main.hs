@@ -24,6 +24,7 @@ import Numeric
 
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
+import Blockchain.Data.RLP
 
 import qualified AESCTR as AES
 import UDP
@@ -286,7 +287,7 @@ main = do
 -------------------------------
 
 
-  let frameData = B.pack [0x80, 0x80]
+  let frameData = B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
       bufferedFrameData = frameData `B.append` B.replicate ((16 - (B.length frameData `mod` 16)) `mod` 16) 0
       state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
       (state'', frameCipher) = AES.encrypt state' bufferedFrameData
@@ -329,7 +330,9 @@ main = do
 
   B.hPut handle payload
 
-  qqqq <- BL.hGet handle 176
+  qqqq <- BL.hGet handle 1
+
+  B.hPut handle $ B.replicate 1000 0
 
   --print qqqq
 

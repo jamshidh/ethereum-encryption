@@ -25,6 +25,7 @@ import Numeric
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
 import Blockchain.Data.RLP
+import Blockchain.Data.Wire
 
 import qualified AESCTR as AES
 import UDP
@@ -164,6 +165,47 @@ decryptECEIS myPrvKey msg =
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
     eKey = B.take 16 key
 
+--sendFrame::B.ByteString->IO ()
+sendFrame handle state ingressMac macEncKey frameDecKey frameData = do
+  let 
+      bufferedFrameData = frameData `B.append` B.replicate ((16 - (B.length frameData `mod` 16)) `mod` 16) 0
+      (state'', frameCipher) = AES.encrypt state' bufferedFrameData
+      frameSize = B.length frameData
+      bufferedCipherData = frameCipher --  `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
+
+      (state', headerData) = AES.encrypt state $
+               B.pack [fromIntegral $ frameSize `shiftR` 16,
+                       fromIntegral $ frameSize `shiftR` 8,
+                       fromIntegral frameSize,
+                       0xc2,
+                       0x80,
+                       0x80,
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    
+      ingressMac' = SHA3.update ingressMac $ headerData `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
+
+      thing2 = B.take 16 $ SHA3.finalize ingressMac'
+
+  B.hPut handle $ headerData `B.append` thing2
+
+-------------------
+
+  let 
+
+      
+      oldDigest = B.take 16 $ SHA3.finalize ingressMac''
+      prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
+      preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
+      updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
+      ingressMac'' = SHA3.update ingressMac' bufferedCipherData
+      ingressMac''' = SHA3.update ingressMac'' updateData
+      thing2' = B.take 16 $ SHA3.finalize ingressMac'''
+      payload = bufferedCipherData `B.append` thing2'
+
+  B.hPut handle payload
+
+  return (state'', ingressMac''')
+
 
 main::IO ()    
 main = do
@@ -286,53 +328,23 @@ main = do
 
 -------------------------------
 
+  let state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
 
-  let frameData = B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
-      bufferedFrameData = frameData `B.append` B.replicate ((16 - (B.length frameData `mod` 16)) `mod` 16) 0
-      state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
-      (state'', frameCipher) = AES.encrypt state' bufferedFrameData
-      frameSize = 16::Integer --B.length frameCipher
-      bufferedCipherData = frameCipher --  `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
+  (state', ingressMac') <-
+    sendFrame handle state ingressMac macEncKey frameDecKey $
+    B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
 
-      (state', headerData) = AES.encrypt state $
-               B.pack [fromIntegral $ frameSize `shiftR` 16,
-                       fromIntegral $ frameSize `shiftR` 8,
-                       fromIntegral frameSize,
-                       0xc2,
-                       0x80,
-                       0x80,
-                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    
-      ingressMac' = SHA3.update ingressMac $ headerData `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
-
-      thing2 = B.take 16 $ SHA3.finalize ingressMac'
-
-  B.hPut handle $ headerData `B.append` thing2
-
-  qqqq <- BL.hGet handle 176
-
-  --print qqqq
-
-  putStrLn "============================"
-
-
-  let 
-
-      
-      oldDigest = B.take 16 $ SHA3.finalize ingressMac''
-      prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
-      preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
-      updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
-      ingressMac'' = SHA3.update ingressMac' bufferedCipherData
-      ingressMac''' = SHA3.update ingressMac'' updateData
-      thing2' = B.take 16 $ SHA3.finalize ingressMac'''
-      payload = bufferedCipherData `B.append` thing2'
-
-  B.hPut handle payload
 
   qqqq <- BL.hGet handle 1
 
-  B.hPut handle $ B.replicate 1000 0
+  let msg = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
+
+  _ <-
+    sendFrame handle state' ingressMac' macEncKey frameDecKey $
+    B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg)
+
+
+  qqqq <- BL.hGet handle 1000
 
   --print qqqq
 

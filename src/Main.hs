@@ -25,6 +25,7 @@ import Numeric
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
 
+import qualified AESCTR as AES
 import UDP
 
 --import Debug.Trace
@@ -286,13 +287,20 @@ main = do
 
 
   let frameData = B.pack [0x80]
-      frameCipher = encryptCTR (initAES frameDecKey) (B.replicate 16 0) frameData
-      frameSize = B.length frameCipher
-      bufferedCipherData = frameCipher `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
+      bufferedFrameData = frameData `B.append` B.pack [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+      state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
+      (state'', frameCipher) = AES.encrypt state' bufferedFrameData
+      frameSize = 16::Integer --B.length frameCipher
+      bufferedCipherData = frameCipher --  `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
 
-  let headerData = encryptCTR (initAES frameDecKey) (B.replicate 16 0) $
-               B.pack [fromIntegral $ frameSize `shiftR` 16, fromIntegral $ frameSize `shiftR` 8, fromIntegral frameSize,
-                       1,1,1,1,1,1,1,1,1,1,1,1,1]
+      (state', headerData) = AES.encrypt state $
+               B.pack [fromIntegral $ frameSize `shiftR` 16,
+                       fromIntegral $ frameSize `shiftR` 8,
+                       fromIntegral frameSize,
+                       0xc2,
+                       0x80,
+                       0x80,
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     
       ingressMac' = SHA3.update ingressMac $ headerData `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
 

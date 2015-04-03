@@ -15,6 +15,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.HMAC
 import Data.Maybe
 import Data.Word
@@ -28,6 +29,7 @@ import Blockchain.Data.RLP
 import Blockchain.Data.Wire
 
 import qualified AESCTR as AES
+import Frame
 import UDP
 
 --import Debug.Trace
@@ -328,19 +330,34 @@ main = do
 
 -------------------------------
 
-  let state = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
+  let eState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
+  let dState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
 
-  (state', ingressMac') <-
-    sendFrame handle state ingressMac macEncKey frameDecKey $
+  (eState', ingressMac') <-
+    sendFrame handle eState ingressMac macEncKey frameDecKey $
     B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
 
 
-  qqqq <- BL.hGet handle 1
+  frameHeader <- BL.hGet handle 32
+
+  let (dState', fh) = bytesToFrameHeader dState (BL.toStrict frameHeader)
+
+  print fh
+
+  frameCipher <- BL.hGet handle (frameSize fh)
+  frameMAC <- BL.hGet handle 32
+
+  let (dState'', frameData) = AES.decrypt dState' (BL.toStrict frameCipher)
+
+  print $ B.take 1 frameData
+  print $ rlpDeserialize $ B.drop 1 frameData
+
+---------------------
 
   let msg = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
 
   _ <-
-    sendFrame handle state' ingressMac' macEncKey frameDecKey $
+    sendFrame handle eState' ingressMac' macEncKey frameDecKey $
     B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg)
 
 

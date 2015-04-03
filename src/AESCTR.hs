@@ -1,6 +1,7 @@
 
 module AESCTR (
   encrypt,
+  decrypt,
   AESCTRState(..),
   aesIV_
   ) where
@@ -21,3 +22,6 @@ getNextAESCTRBytes (AESCTRState aes iv p) c =
 encrypt::AESCTRState->B.ByteString->(AESCTRState, B.ByteString)
 encrypt state plainText =
   fmap (B.pack . B.zipWith xor plainText) $ getNextAESCTRBytes state (B.length plainText)
+
+decrypt::AESCTRState->B.ByteString->(AESCTRState, B.ByteString)
+decrypt = encrypt

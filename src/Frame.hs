@@ -123,8 +123,10 @@ getAndDecryptFrame = do
   headCipher <- getBytes 16
   headMAC <- getBytes 16
 
-  expectedHeadMAC <- updateEgressMac headCipher
-  when (expectedHeadMAC /= headMAC) $ error "oops, head mac isn't what I expected"
+  --TODO- verify the HMAC, update ingressCipher
+
+  expectedHeadMAC <- updateIngressMac headCipher
+  --when (expectedHeadMAC /= headMAC) $ error "oops, head mac isn't what I expected"
 
   header <- decrypt headCipher
 
@@ -139,10 +141,9 @@ getAndDecryptFrame = do
   _ <- rawUpdateIngressMac frameCipher
   expectedFrameMAC <- updateIngressMac headMAC
 
-  when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
+  --when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
   frame <- decrypt frameCipher
 
-  --TODO- verify the HMAC, update ingressCipher
 
   return frame

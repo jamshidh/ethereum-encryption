@@ -17,7 +17,6 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.HMAC
 import Data.Maybe
 import Data.Word
@@ -44,10 +43,12 @@ intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 
 pointToBytes::Point->[Word8]
 pointToBytes (Point x y) = intToBytes x ++ intToBytes y
+pointToBytes PointO = error "pointToBytes got value PointO, I don't know what to do here"
 
 showPoint::Point->String
 showPoint (Point x y) =
   "Point " ++ showHex x "" ++ " " ++ showHex y ""
+showPoint PointO = error "showPoint got value PointO, I don't know what to do here"
 
 hShowPoint::H.Point->String
 hShowPoint point =
@@ -134,7 +135,11 @@ bytesToAckMsg bytes | length bytes == 97 =
   AckMessage {
     ackEphemeralPubKey=bytesToPoint $ take 64 bytes,
     ackNonce=bytesToWord256 $ take 32 $ drop 64 bytes,
-    ackKnownPeer=case bytes !! 96 of 0 -> False;  1 -> True
+    ackKnownPeer=
+      case bytes !! 96 of
+        0 -> False
+        1 -> True
+        _ -> error "known peer byte in ackMessage is neither 0 nor 1"
     }
 bytesToAckMsg _ = error "wrong number of bytes in call to bytesToECEISMsg"
 
@@ -169,46 +174,6 @@ decryptECEIS myPrvKey msg =
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
     eKey = B.take 16 key
 
---sendFrame::B.ByteString->IO ()
-sendFrame handle state ingressMac macEncKey frameDecKey frameData = do
-  let 
-      bufferedFrameData = frameData `B.append` B.replicate ((16 - (B.length frameData `mod` 16)) `mod` 16) 0
-      (state'', frameCipher) = AES.encrypt state' bufferedFrameData
-      frameSize = B.length frameData
-      bufferedCipherData = frameCipher --  `B.append` B.replicate (16*(ceiling (fromIntegral frameSize/16.0)) - frameSize) 0
-
-      (state', headerData) = AES.encrypt state $
-               B.pack [fromIntegral $ frameSize `shiftR` 16,
-                       fromIntegral $ frameSize `shiftR` 8,
-                       fromIntegral frameSize,
-                       0xc2,
-                       0x80,
-                       0x80,
-                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    
-      ingressMac' = SHA3.update ingressMac $ headerData `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac))
-
-      thing2 = B.take 16 $ SHA3.finalize ingressMac'
-
-  B.hPut handle $ headerData `B.append` thing2
-
--------------------
-
-  let 
-
-      
-      oldDigest = B.take 16 $ SHA3.finalize ingressMac''
-      prePreUpdateData = B.take 16 $ SHA3.finalize ingressMac''
-      preUpdateData = encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac'')
-      updateData = oldDigest `bXor` (encryptECB (initAES macEncKey) (B.take 16 $ SHA3.finalize ingressMac''))
-      ingressMac'' = SHA3.update ingressMac' bufferedCipherData
-      ingressMac''' = SHA3.update ingressMac'' updateData
-      thing2' = B.take 16 $ SHA3.finalize ingressMac'''
-      payload = bufferedCipherData `B.append` thing2'
-
-  B.hPut handle payload
-
-  return (state'', ingressMac''')
 
 
 main::IO ()    
@@ -216,13 +181,13 @@ main = do
 
   serverPubKey <- getServerPubKey "127.0.0.1" 30303
   
-  handle <- connectTo "127.0.0.1" $ PortNumber 30303
+  h <- connectTo "127.0.0.1" $ PortNumber 30303
 
   putStrLn "Connected"
   entropyPool <- createEntropyPool
   let g = cprgCreate entropyPool :: SystemRNG
   let 
-      (myPriv, g') = generatePrivate g theCurve
+      (myPriv, _) = generatePrivate g theCurve
       myPublic = calculatePublic theCurve myPriv
       H.PubKey point = serverPubKey
       x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
@@ -232,7 +197,6 @@ main = do
   
   putStrLn $ "priv: " ++ showHex myPriv ""
   putStrLn $ "shared: " ++ showHex sharedKey ""
-  let (Point x' y') = myPublic
   putStrLn $ "public: " ++ hShowPoint point
 
   putStrLn $ "serverPubKey: " ++ showPoint otherPublic
@@ -260,10 +224,10 @@ main = do
 
   let eceisMessage = encryptECEIS myPriv otherPublic cipherIV $ B.pack theData 
 
-  BL.hPut handle $ BL.pack $ eceisMsgToBytes eceisMessage
+  BL.hPut h $ BL.pack $ eceisMsgToBytes eceisMessage
 
-  --reply <- BL.hGet handle 386
-  reply <- BL.hGet handle 210
+  --reply <- BL.hGet h 386
+  reply <- BL.hGet h 210
 
   let replyECEISMsg = bytesToECEISMsg $ BL.unpack reply
 
@@ -323,45 +287,45 @@ main = do
       egressCipher = if m_originated then m_authCipher else m_ackCipher
       ingressCipher = if m_originated then m_ackCipher else m_authCipher
 
-
-  let ingressMac = SHA3.update (SHA3.init 256) $ 
-                    (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
-
 -------------------------------
 
-  let state =
+  let cState =
         EthCryptState {
-          handle = handle,
+          handle = h,
           encryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           decryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           egressMAC=SHA3.update (SHA3.init 256) $
                     (macEncKey `bXor` (B.pack m_remoteNonce)) `B.append` egressCipher,
-          egressKey=macEncKey
+          egressKey=macEncKey,
+          ingressMAC=SHA3.update (SHA3.init 256) $ 
+                     (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher,
+          ingressKey=macEncKey
           }
-  
-  flip runStateT state $ do
-    encryptAndPutFrame $
-      B.pack [0x80] `B.append`
-      rlpSerialize (RLPArray [
-                       rlpEncode (3::Integer),
-                       rlpEncode (0::Integer),
-                       rlpEncode (0::Integer),
-                       rlpEncode (0::Integer)
-                       ])
+
+  _ <-
+    flip runStateT cState $ do
+      encryptAndPutFrame $
+        B.pack [0x80] `B.append`
+        rlpSerialize (RLPArray [
+                         rlpEncode (3::Integer),
+                         rlpEncode (0::Integer),
+                         rlpEncode (0::Integer),
+                         rlpEncode (0::Integer)
+                         ])
       
-    frameData <- getAndDecryptFrame
+      frameData <- getAndDecryptFrame
   
-    liftIO $ print $ B.take 1 frameData
-    liftIO $ print $ rlpDeserialize $ B.drop 1 frameData
+      liftIO $ print $ B.take 1 frameData
+      liftIO $ print $ rlpDeserialize $ B.drop 1 frameData
 
-    let msg = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
+      let msg2 = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
 
-    encryptAndPutFrame $
-      B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg)
+      encryptAndPutFrame $
+        B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg2)
 
 
-  qqqq <- BL.hGet handle 1000
+  qqqq <- BL.hGet h 1000
 
-  --print qqqq
+  print qqqq
 
   return ()

@@ -1,21 +1,17 @@
 
 module Frame (
-  FrameHeader(..),
-  bytesToFrameHeader,
-  frameHeaderToBytes,
   EthCryptState(..),
   encryptAndPutFrame,
   getAndDecryptFrame
   ) where
 
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 import Crypto.Cipher.AES
 import qualified Crypto.Hash.SHA3 as SHA3
 import Data.Bits
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Char8 as BC
 import System.IO
 
 import qualified AESCTR as AES
@@ -27,95 +23,75 @@ bXor x y = error $
            show (B.length x) ++ ", length string2 = " ++ show (B.length y)
 
 
-data FrameHeader =
-  FrameHeader {
-    frameSize::Int,
-    headerHmac::B.ByteString
-    } deriving (Show)
-
-bytesToFrameHeader::AES.AESCTRState->B.ByteString->(AES.AESCTRState, FrameHeader)
-bytesToFrameHeader state bytes | B.length bytes == 32 =
-  if B.unpack (B.drop 3 first) == [0xc2, 0x80, 0x80, 0,0,0,0,0,0,0,0,0,0]
-  then
-    (state',
-     FrameHeader {
-        frameSize = 
-           (fromIntegral $ first `B.index` 0 `shiftL` 16) +
-           (fromIntegral $ first `B.index` 1 `shiftL` 8) +
-           (fromIntegral $ first `B.index` 2),
-        headerHmac = hmac'
-        })
-  else error $ "frame header in wrong format: " ++ BC.unpack (B16.encode bytes)
-  where
-    (encryptedFirst, hmac') = B.splitAt 16 bytes
-    (state', first) = AES.decrypt state encryptedFirst
-    
-bytesToFrameHeader _ x = error $ "Missing case for bytesToFrameHeader: " ++ BC.unpack (B16.encode x)
-
-frameHeaderToBytes::FrameHeader->B.ByteString
-frameHeaderToBytes fh =
-  B.pack [fromIntegral $ frameSize fh `shiftR` 16,
-          fromIntegral $ frameSize fh `shiftR` 8,
-          fromIntegral $ frameSize fh,
-          0xc2,
-          0x80,
-          0x80,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-  `B.append` headerHmac fh
-  
-
 data EthCryptState =
   EthCryptState {
     handle::Handle,
     encryptState::AES.AESCTRState,
     decryptState::AES.AESCTRState,
     egressMAC::SHA3.Ctx,
-    egressKey::B.ByteString
+    ingressMAC::SHA3.Ctx,
+    egressKey::B.ByteString,
+    ingressKey::B.ByteString
     }
 
 type EthCryptM = StateT EthCryptState IO
 
 putBytes::B.ByteString->EthCryptM ()
 putBytes bytes = do
-  state <- get
-  liftIO $ B.hPut (handle state) bytes
+  cState <- get
+  liftIO $ B.hPut (handle cState) bytes
 
 getBytes::Int->EthCryptM B.ByteString
 getBytes size = do
-  state <- get
-  liftIO $ B.hGet (handle state) size
+  cState <- get
+  liftIO $ B.hGet (handle cState) size
   
 encrypt::B.ByteString->EthCryptM B.ByteString
 encrypt input = do
-  state <- get
-  let aesState = encryptState state
+  cState <- get
+  let aesState = encryptState cState
   let (aesState', output) = AES.encrypt aesState input
-  put state{encryptState=aesState'}
+  put cState{encryptState=aesState'}
   return output
 
 decrypt::B.ByteString->EthCryptM B.ByteString
 decrypt input = do
-  state <- get
-  let aesState = decryptState state
+  cState <- get
+  let aesState = decryptState cState
   let (aesState', output) = AES.decrypt aesState input
-  put state{decryptState=aesState'}
+  put cState{decryptState=aesState'}
   return output
 
 rawUpdateEgressMac::B.ByteString->EthCryptM B.ByteString
 rawUpdateEgressMac value = do
-  state <- get
-  let mac = egressMAC state
+  cState <- get
+  let mac = egressMAC cState
   let mac' = SHA3.update mac value
-  put state{egressMAC=mac'}
+  put cState{egressMAC=mac'}
   return $ B.take 16 $ SHA3.finalize mac'
 
 updateEgressMac::B.ByteString->EthCryptM B.ByteString
 updateEgressMac value = do
-  state <- get
-  let mac = egressMAC state
+  cState <- get
+  let mac = egressMAC cState
   rawUpdateEgressMac $
-    value `bXor` (encryptECB (initAES $ egressKey state) (B.take 16 $ SHA3.finalize mac))
-               
+    value `bXor` (encryptECB (initAES $ egressKey cState) (B.take 16 $ SHA3.finalize mac))
+
+rawUpdateIngressMac::B.ByteString->EthCryptM B.ByteString
+rawUpdateIngressMac value = do
+  cState <- get
+  let mac = ingressMAC cState
+  let mac' = SHA3.update mac value
+  put cState{ingressMAC=mac'}
+  return $ B.take 16 $ SHA3.finalize mac'
+
+updateIngressMac::B.ByteString->EthCryptM B.ByteString
+updateIngressMac value = do
+  cState <- get
+  let mac = ingressMAC cState
+  rawUpdateIngressMac $
+    value `bXor` (encryptECB (initAES $ ingressKey cState) (B.take 16 $ SHA3.finalize mac))
+
 encryptAndPutFrame::B.ByteString->EthCryptM ()
 encryptAndPutFrame bytes = do
   let frameSize = B.length bytes
@@ -136,7 +112,7 @@ encryptAndPutFrame bytes = do
   putBytes headMAC
 
   frameCipher <- encrypt bytes
-  frameMAC <- rawUpdateEgressMac frameCipher
+  _ <- rawUpdateEgressMac frameCipher
   frameMAC <- updateEgressMac headMAC
 
   putBytes frameCipher
@@ -145,17 +121,25 @@ encryptAndPutFrame bytes = do
 getAndDecryptFrame::EthCryptM B.ByteString
 getAndDecryptFrame = do
   headCipher <- getBytes 16
-  headHMAC <- getBytes 16
+  headMAC <- getBytes 16
 
-  head <- decrypt headCipher
+  expectedHeadMAC <- updateEgressMac headCipher
+  when (expectedHeadMAC /= headMAC) $ error "oops, head mac isn't what I expected"
+
+  header <- decrypt headCipher
 
   let frameSize = 
-        (fromIntegral $ head `B.index` 0 `shiftL` 16) +
-        (fromIntegral $ head `B.index` 1 `shiftL` 8) +
-        (fromIntegral $ head `B.index` 2)
+        (fromIntegral $ header `B.index` 0 `shiftL` 16) +
+        (fromIntegral $ header `B.index` 1 `shiftL` 8) +
+        (fromIntegral $ header `B.index` 2)
 
   frameCipher <- getBytes frameSize
-  frameHMAC <- getBytes 16
+  frameMAC <- getBytes 16
+
+  _ <- rawUpdateIngressMac frameCipher
+  expectedFrameMAC <- updateIngressMac headMAC
+
+  when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
   frame <- decrypt frameCipher
 

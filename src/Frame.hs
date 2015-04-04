@@ -9,6 +9,8 @@ module Frame (
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
+import Crypto.Cipher.AES
+import qualified Crypto.Hash.SHA3 as SHA3
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
@@ -16,6 +18,11 @@ import qualified Data.ByteString.Char8 as BC
 import System.IO
 
 import qualified AESCTR as AES
+
+bXor::B.ByteString->B.ByteString->B.ByteString
+bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y 
+bXor _ _ = error "bXor called with two ByteStrings of different length"
+
 
 data FrameHeader =
   FrameHeader {
@@ -58,11 +65,23 @@ data EthCryptState =
   EthCryptState {
     handle::Handle,
     encryptState::AES.AESCTRState,
-    decryptState::AES.AESCTRState
+    decryptState::AES.AESCTRState,
+    egressMAC::SHA3.Ctx,
+    egressKey::B.ByteString
     }
 
 type EthCryptM = StateT EthCryptState IO
 
+putBytes::B.ByteString->EthCryptM ()
+putBytes bytes = do
+  state <- get
+  liftIO $ B.hPut (handle state) bytes
+
+getBytes::Int->EthCryptM B.ByteString
+getBytes size = do
+  state <- get
+  liftIO $ B.hGet (handle state) size
+  
 encrypt::B.ByteString->EthCryptM B.ByteString
 encrypt input = do
   state <- get
@@ -79,11 +98,44 @@ decrypt input = do
   put state{decryptState=aesState'}
   return output
 
-getBytes::Int->EthCryptM B.ByteString
-getBytes size = do
+updateEgressMac::B.ByteString->EthCryptM B.ByteString
+updateEgressMac value = do
   state <- get
-  liftIO $ B.hGet (handle state) size
+  let mac = egressMAC state
+  let mac' =
+        SHA3.update mac $
+        value `bXor` (encryptECB (initAES $ egressKey state) (B.take 16 $ SHA3.finalize mac))
+  put state{egressMAC=mac'}
+  return $ B.take 16 $ SHA3.finalize mac'
+
+               
+encryptAndPutFrame::B.ByteString->EthCryptM ()
+encryptAndPutFrame bytes = do
+  let frameSize = B.length bytes
+      header =
+        B.pack [fromIntegral $ frameSize `shiftR` 16,
+                fromIntegral $ frameSize `shiftR` 8,
+                fromIntegral $ frameSize,
+                0xc2,
+                0x80,
+                0x80,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+  headCipher <- encrypt header
   
+  headMAC <- updateEgressMac headCipher
+
+  putBytes headCipher
+  putBytes headMAC
+
+  head <- decrypt headCipher
+
+  frameCipher <- encrypt bytes
+  frameMAC <- updateEgressMac frameCipher
+
+  putBytes frameCipher
+  putBytes frameMAC
+
 getAndDecryptFrame::EthCryptM B.ByteString
 getAndDecryptFrame = do
   headCipher <- getBytes 16

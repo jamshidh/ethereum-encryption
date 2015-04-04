@@ -4,6 +4,8 @@ module Main (
   main
   ) where
 
+import Control.Monad.IO.Class
+import Control.Monad.Trans.State
 import Crypto.Cipher.AES
 import Crypto.Hash.SHA256
 import qualified Crypto.Hash.SHA3 as SHA3
@@ -337,20 +339,18 @@ main = do
     sendFrame handle eState ingressMac macEncKey frameDecKey $
     B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
 
-
-  frameHeader <- BL.hGet handle 32
-
-  let (dState', fh) = bytesToFrameHeader dState (BL.toStrict frameHeader)
-
-  print fh
-
-  frameCipher <- BL.hGet handle (frameSize fh)
-  frameMAC <- BL.hGet handle 32
-
-  let (dState'', frameData) = AES.decrypt dState' (BL.toStrict frameCipher)
-
-  print $ B.take 1 frameData
-  print $ rlpDeserialize $ B.drop 1 frameData
+  let state =
+        EthCryptState {
+          handle = handle,
+          encryptState = eState',
+          decryptState = dState
+          }
+  
+  flip runStateT state $ do
+    frameData <- getAndDecryptFrame
+  
+    liftIO $ print $ B.take 1 frameData
+    liftIO $ print $ rlpDeserialize $ B.drop 1 frameData
 
 ---------------------
 

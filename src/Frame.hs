@@ -2,13 +2,18 @@
 module Frame (
   FrameHeader(..),
   bytesToFrameHeader,
-  frameHeaderToBytes
+  frameHeaderToBytes,
+  EthCryptState(..),
+  getAndDecryptFrame
   ) where
 
+import Control.Monad.IO.Class
+import Control.Monad.Trans.State
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BC
+import System.IO
 
 import qualified AESCTR as AES
 
@@ -48,5 +53,56 @@ frameHeaderToBytes fh =
           0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   `B.append` headerHmac fh
   
+
+data EthCryptState =
+  EthCryptState {
+    handle::Handle,
+    encryptState::AES.AESCTRState,
+    decryptState::AES.AESCTRState
+    }
+
+type EthCryptM = StateT EthCryptState IO
+
+encrypt::B.ByteString->EthCryptM B.ByteString
+encrypt input = do
+  state <- get
+  let aesState = encryptState state
+  let (aesState', output) = AES.encrypt aesState input
+  put state{encryptState=aesState'}
+  return output
+
+decrypt::B.ByteString->EthCryptM B.ByteString
+decrypt input = do
+  state <- get
+  let aesState = decryptState state
+  let (aesState', output) = AES.decrypt aesState input
+  put state{decryptState=aesState'}
+  return output
+
+getBytes::Int->EthCryptM B.ByteString
+getBytes size = do
+  state <- get
+  liftIO $ B.hGet (handle state) size
   
+getAndDecryptFrame::EthCryptM B.ByteString
+getAndDecryptFrame = do
+  headCipher <- getBytes 16
+  headHMAC <- getBytes 16
+
+  head <- decrypt headCipher
+
+  let frameSize = 
+        (fromIntegral $ head `B.index` 0 `shiftL` 16) +
+        (fromIntegral $ head `B.index` 1 `shiftL` 8) +
+        (fromIntegral $ head `B.index` 2)
+
+  liftIO $ putStrLn $ "frameSize = " ++ show frameSize
   
+  frameCipher <- getBytes frameSize
+  frameHMAC <- getBytes 16
+
+  frame <- decrypt frameCipher
+
+  --TODO- verify the HMAC, update ingressCipher
+
+  return frame

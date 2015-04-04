@@ -324,41 +324,40 @@ main = do
       ingressCipher = if m_originated then m_ackCipher else m_authCipher
 
 
-  let egressMac = SHA3.update (SHA3.init 256) $
-                   (macEncKey `bXor` (B.pack m_remoteNonce)) `B.append` egressCipher
-
   let ingressMac = SHA3.update (SHA3.init 256) $ 
                     (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher
 
 -------------------------------
 
-  let eState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
-  let dState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0
-
-  (eState', ingressMac') <-
-    sendFrame handle eState ingressMac macEncKey frameDecKey $
-    B.pack [0x80] `B.append` rlpSerialize (RLPArray [rlpEncode (3::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer), rlpEncode (0::Integer)])
-
   let state =
         EthCryptState {
           handle = handle,
-          encryptState = eState',
-          decryptState = dState
+          encryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
+          decryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
+          egressMAC=SHA3.update (SHA3.init 256) $
+                    (macEncKey `bXor` (B.pack m_remoteNonce)) `B.append` egressCipher,
+          egressKey=macEncKey
           }
   
   flip runStateT state $ do
+    encryptAndPutFrame $
+      B.pack [0x80] `B.append`
+      rlpSerialize (RLPArray [
+                       rlpEncode (3::Integer),
+                       rlpEncode (0::Integer),
+                       rlpEncode (0::Integer),
+                       rlpEncode (0::Integer)
+                       ])
+      
     frameData <- getAndDecryptFrame
   
     liftIO $ print $ B.take 1 frameData
     liftIO $ print $ rlpDeserialize $ B.drop 1 frameData
 
----------------------
+    let msg = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
 
-  let msg = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
-
-  _ <-
-    sendFrame handle eState' ingressMac' macEncKey frameDecKey $
-    B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg)
+    encryptAndPutFrame $
+      B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg)
 
 
   qqqq <- BL.hGet handle 1000

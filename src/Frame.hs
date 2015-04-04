@@ -4,6 +4,7 @@ module Frame (
   bytesToFrameHeader,
   frameHeaderToBytes,
   EthCryptState(..),
+  encryptAndPutFrame,
   getAndDecryptFrame
   ) where
 
@@ -21,7 +22,9 @@ import qualified AESCTR as AES
 
 bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y 
-bXor _ _ = error "bXor called with two ByteStrings of different length"
+bXor x y = error $
+           "bXor called with two ByteStrings of different length: length string1 = " ++
+           show (B.length x) ++ ", length string2 = " ++ show (B.length y)
 
 
 data FrameHeader =
@@ -98,16 +101,20 @@ decrypt input = do
   put state{decryptState=aesState'}
   return output
 
+rawUpdateEgressMac::B.ByteString->EthCryptM B.ByteString
+rawUpdateEgressMac value = do
+  state <- get
+  let mac = egressMAC state
+  let mac' = SHA3.update mac value
+  put state{egressMAC=mac'}
+  return $ B.take 16 $ SHA3.finalize mac'
+
 updateEgressMac::B.ByteString->EthCryptM B.ByteString
 updateEgressMac value = do
   state <- get
   let mac = egressMAC state
-  let mac' =
-        SHA3.update mac $
-        value `bXor` (encryptECB (initAES $ egressKey state) (B.take 16 $ SHA3.finalize mac))
-  put state{egressMAC=mac'}
-  return $ B.take 16 $ SHA3.finalize mac'
-
+  rawUpdateEgressMac $
+    value `bXor` (encryptECB (initAES $ egressKey state) (B.take 16 $ SHA3.finalize mac))
                
 encryptAndPutFrame::B.ByteString->EthCryptM ()
 encryptAndPutFrame bytes = do
@@ -128,10 +135,9 @@ encryptAndPutFrame bytes = do
   putBytes headCipher
   putBytes headMAC
 
-  head <- decrypt headCipher
-
   frameCipher <- encrypt bytes
-  frameMAC <- updateEgressMac frameCipher
+  frameMAC <- rawUpdateEgressMac frameCipher
+  frameMAC <- updateEgressMac headMAC
 
   putBytes frameCipher
   putBytes frameMAC
@@ -148,8 +154,6 @@ getAndDecryptFrame = do
         (fromIntegral $ head `B.index` 1 `shiftL` 8) +
         (fromIntegral $ head `B.index` 2)
 
-  liftIO $ putStrLn $ "frameSize = " ++ show frameSize
-  
   frameCipher <- getBytes frameSize
   frameHMAC <- getBytes 16
 

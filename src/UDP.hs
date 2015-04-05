@@ -128,14 +128,6 @@ processDataStream'
   let SHA messageHash = hash $ B.pack $ [theType] ++ B.unpack (rlpSerialize rlp)
       publicKey = getPubKeyFromSignature signature messageHash  
 
-  putStrLn $ showPubKey publicKey
-
---  print rlp
-
-  print $ rlpToNDPacket theType rlp
-
---  processDataStream' rest'
-
   return publicKey
 
 processDataStream' _ = error "processDataStream' called with too few bytes"
@@ -204,7 +196,7 @@ getServerPubKey domain port = do
                     s = H.sigS signature
                     theSignature = word256ToBytes (fromIntegral r) ++ word256ToBytes (fromIntegral s) ++ [v]
                     theHash = B.unpack $ SHA3.hash 256 $ B.pack $ theSignature ++ [theType] ++ theData
-                putStrLn $ "my address is " ++ show (pretty $ prvKey2Address prvKey')
+                --putStrLn $ "my address is " ++ show (pretty $ prvKey2Address prvKey')
                 --let nodeId = pubKeyToNodeID $ H.derivePubKey prvKey
                 B.hPut h $ B.pack $ theHash ++ theSignature ++ [theType] ++ theData
                 --send s $ map w2c $ theHash ++ theSignature ++ theType ++ theData

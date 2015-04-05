@@ -256,12 +256,7 @@ runEthCryptM myPriv otherPubKey f = do
       SharedKey shared' = getShared theCurve myPriv (ackEphemeralPubKey ackMsg)
       shared = B.pack $ intToBytes shared'
 
-      frameDecKey = 
-        myNonce `add`
-        otherNonce `add`
-        shared `add`
-        shared
-
+      frameDecKey = myNonce `add` otherNonce `add` shared `add` shared
       macEncKey = frameDecKey `add` shared
 
       ingressCipher = if m_originated then m_authCipher else m_ackCipher

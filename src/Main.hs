@@ -255,8 +255,7 @@ main = do
       add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
       add _ _ = error "add called with ByteString of length not 32"
 
-      m_remoteNonce=myNonce
-      m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
+      otherNonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
       m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
       m_ackCipher=BL.toStrict reply
@@ -265,8 +264,8 @@ main = do
       shared = B.pack $ intToBytes shared'
 
       frameDecKey = 
-        m_remoteNonce `add`
-        m_nonce `add`
+        myNonce `add`
+        otherNonce `add`
         shared `add`
         shared
 
@@ -283,10 +282,10 @@ main = do
           encryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           decryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           egressMAC=SHA3.update (SHA3.init 256) $
-                    (macEncKey `bXor` m_nonce) `B.append` egressCipher,
+                    (macEncKey `bXor` otherNonce) `B.append` egressCipher,
           egressKey=macEncKey,
           ingressMAC=SHA3.update (SHA3.init 256) $ 
-                     (macEncKey `bXor` m_remoteNonce) `B.append` ingressCipher,
+                     (macEncKey `bXor` myNonce) `B.append` ingressCipher,
           ingressKey=macEncKey
           }
 

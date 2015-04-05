@@ -26,6 +26,7 @@ import Numeric
 
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
+import Blockchain.Format
 import Blockchain.Data.RLP
 import Blockchain.Data.Wire
 
@@ -245,7 +246,7 @@ main = do
       add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
       add _ _ = error "add called with ByteString of length not 32"
 
-      m_remoteNonce=word256ToBytes nonce
+      m_remoteNonce=B.pack $ word256ToBytes nonce
       m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
       m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
@@ -255,7 +256,7 @@ main = do
   putStrLn $ "m_originated=" ++ show m_originated
 --  putStrLn $ "m_remoteEphemeral=" ++ show m_remoteEphemeral
   putStrLn $ "m_nonce=" ++ BC.unpack (B16.encode m_nonce)
-  putStrLn $ "m_remoteNonce=" ++ BC.unpack (B16.encode $ B.pack m_remoteNonce)
+  putStrLn $ "m_remoteNonce=" ++ BC.unpack (B16.encode m_remoteNonce)
   putStrLn $ "m_authCipher=" ++ BC.unpack (B16.encode m_authCipher)
   putStrLn $ "m_ackCipher=" ++ BC.unpack (B16.encode m_ackCipher)
 --  putStrLn $ "secret=0x" ++ showHex secret ""
@@ -272,20 +273,20 @@ main = do
 
   
   let macEncKey = 
-        (B.pack m_remoteNonce) `add`
+        m_remoteNonce `add`
         m_nonce `add`
         shared `add`
         shared `add`
         shared
 
   let frameDecKey = 
-        (B.pack m_remoteNonce) `add`
+        m_remoteNonce `add`
         m_nonce `add`
         shared `add`
         shared
 
-      egressCipher = if m_originated then m_authCipher else m_ackCipher
-      ingressCipher = if m_originated then m_ackCipher else m_authCipher
+      ingressCipher = if m_originated then m_authCipher else m_ackCipher
+      egressCipher = if m_originated then m_ackCipher else m_authCipher
 
 -------------------------------
 
@@ -295,33 +296,33 @@ main = do
           encryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           decryptState = AES.AESCTRState (initAES frameDecKey) (aesIV_ $ B.replicate 16 0) 0,
           egressMAC=SHA3.update (SHA3.init 256) $
-                    (macEncKey `bXor` (B.pack m_remoteNonce)) `B.append` egressCipher,
+                    (macEncKey `bXor` m_nonce) `B.append` egressCipher,
           egressKey=macEncKey,
           ingressMAC=SHA3.update (SHA3.init 256) $ 
-                     (macEncKey `bXor` (m_nonce)) `B.append` ingressCipher,
+                     (macEncKey `bXor` m_remoteNonce) `B.append` ingressCipher,
           ingressKey=macEncKey
           }
 
   _ <-
     flip runStateT cState $ do
-      encryptAndPutFrame $
-        B.pack [0x80] `B.append`
-        rlpSerialize (RLPArray [
-                         rlpEncode (3::Integer),
-                         rlpEncode (0::Integer),
-                         rlpEncode (0::Integer),
-                         rlpEncode (0::Integer)
-                         ])
+      let (pType, pData) = wireMessage2Obj $ Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
+      encryptAndPutFrame $ B.cons pType $ rlpSerialize pData
       
       frameData <- getAndDecryptFrame
   
-      liftIO $ print $ B.take 1 frameData
-      liftIO $ print $ rlpDeserialize $ B.drop 1 frameData
+      let packetType = 
+              case frameData `B.index` 0 of 
+                128 -> 0
+                x -> x
+      let packetData = rlpDeserialize $ B.drop 1 frameData
 
-      let msg2 = Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
+      liftIO $ putStrLn $ format $ obj2WireMessage packetType packetData
 
+      let msg2 = Ping
+
+      let (pType2, pData2) = wireMessage2Obj msg2
       encryptAndPutFrame $
-        B.pack [0x2] `B.append` rlpSerialize (wireMessage2Obj msg2)
+        B.cons pType2 $ rlpSerialize pData2 
 
 
   qqqq <- BL.hGet h 1000

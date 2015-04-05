@@ -5,6 +5,8 @@ module Frame (
   getAndDecryptFrame
   ) where
 
+import qualified Data.ByteString.Base16 as B16
+import qualified Data.ByteString.Char8 as BC
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
@@ -74,6 +76,8 @@ updateEgressMac::B.ByteString->EthCryptM B.ByteString
 updateEgressMac value = do
   cState <- get
   let mac = egressMAC cState
+  liftIO $ putStrLn $ "previous egress: " ++ BC.unpack (B16.encode $ SHA3.finalize mac)
+  liftIO $ putStrLn $ "egress key: " ++ BC.unpack (B16.encode $ egressKey cState)
   rawUpdateEgressMac $
     value `bXor` (encryptECB (initAES $ egressKey cState) (B.take 16 $ SHA3.finalize mac))
 
@@ -104,9 +108,16 @@ encryptAndPutFrame bytes = do
                 0x80,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
+  liftIO $ putStrLn $ "header=" ++ BC.unpack (B16.encode header)
+  liftIO $ putStrLn $ "framesize=" ++ show frameSize
+
+
   headCipher <- encrypt header
   
   headMAC <- updateEgressMac headCipher
+
+  liftIO $ putStrLn $ "headCipher=" ++ BC.unpack (B16.encode headCipher) 
+
 
   putBytes headCipher
   putBytes headMAC

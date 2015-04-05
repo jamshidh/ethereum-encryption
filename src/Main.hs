@@ -305,9 +305,10 @@ main = do
 
   _ <-
     flip runStateT cState $ do
-      let (pType, pData) = wireMessage2Obj $ Hello {version=3, clientId="qqqq", capability=[], port=30303, nodeId=0x1}
+      let (pType, pData) = wireMessage2Obj $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
       encryptAndPutFrame $ B.cons pType $ rlpSerialize pData
       
+
       frameData <- getAndDecryptFrame
   
       let packetType = 

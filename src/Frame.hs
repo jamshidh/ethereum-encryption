@@ -76,8 +76,6 @@ updateEgressMac::B.ByteString->EthCryptM B.ByteString
 updateEgressMac value = do
   cState <- get
   let mac = egressMAC cState
-  liftIO $ putStrLn $ "previous egress: " ++ BC.unpack (B16.encode $ SHA3.finalize mac)
-  liftIO $ putStrLn $ "egress key: " ++ BC.unpack (B16.encode $ egressKey cState)
   rawUpdateEgressMac $
     value `bXor` (encryptECB (initAES $ egressKey cState) (B.take 16 $ SHA3.finalize mac))
 
@@ -99,6 +97,7 @@ updateIngressMac value = do
 encryptAndPutFrame::B.ByteString->EthCryptM ()
 encryptAndPutFrame bytes = do
   let frameSize = B.length bytes
+      frameBuffSize = (16 - frameSize `mod` 16) `mod` 16
       header =
         B.pack [fromIntegral $ frameSize `shiftR` 16,
                 fromIntegral $ frameSize `shiftR` 8,
@@ -108,23 +107,15 @@ encryptAndPutFrame bytes = do
                 0x80,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-  liftIO $ putStrLn $ "header=" ++ BC.unpack (B16.encode header)
-  liftIO $ putStrLn $ "framesize=" ++ show frameSize
-
-
   headCipher <- encrypt header
   
   headMAC <- updateEgressMac headCipher
 
-  liftIO $ putStrLn $ "headCipher=" ++ BC.unpack (B16.encode headCipher) 
-
-
   putBytes headCipher
   putBytes headMAC
 
-  frameCipher <- encrypt bytes
-  _ <- rawUpdateEgressMac frameCipher
-  frameMAC <- updateEgressMac headMAC
+  frameCipher <- encrypt (bytes `B.append` B.replicate frameBuffSize 0)
+  frameMAC <- updateEgressMac =<< rawUpdateEgressMac frameCipher
 
   putBytes frameCipher
   putBytes frameMAC

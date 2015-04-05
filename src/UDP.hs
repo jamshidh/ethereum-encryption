@@ -18,9 +18,8 @@ import GHC.IO.IOMode
 import qualified Network.Haskoin.Internals as H
 import Numeric
 import System.IO
-import Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
+--import Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
-import Blockchain.Data.Address
 import Blockchain.Data.RLP
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord

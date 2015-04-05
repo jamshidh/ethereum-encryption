@@ -14,15 +14,15 @@ import Crypto.Types.PubKey.ECC
 import Crypto.Random
 import Data.Bits
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Char8 as BC
+--import qualified Data.ByteString.Base16 as B16
+--import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import Data.HMAC
 import Data.Maybe
 import Data.Word
 import Network
 import qualified Network.Haskoin.Internals as H
-import Numeric
+--import Numeric
 
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
@@ -46,6 +46,7 @@ pointToBytes::Point->[Word8]
 pointToBytes (Point x y) = intToBytes x ++ intToBytes y
 pointToBytes PointO = error "pointToBytes got value PointO, I don't know what to do here"
 
+{-
 showPoint::Point->String
 showPoint (Point x y) =
   "Point " ++ showHex x "" ++ " " ++ showHex y ""
@@ -57,7 +58,7 @@ hShowPoint point =
   where
     x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
     y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
-
+-}
 
 ctr::[Word8]
 ctr=[0,0,0,1]
@@ -190,114 +191,86 @@ recvMsg = do
 
   return $ obj2WireMessage packetType packetData
 
+--I need to use two definitions of PubKey (internally they represent the same thing)
+--The one in the Haskoin package allows me to recover signatures.
+--The one in the crypto packages let me do AES encryption.
+--At some point I have to convert from one PubKey to the other, this function
+--lets me to that.
+hPubKeyToPubKey::H.PubKey->Point
+hPubKeyToPubKey (H.PubKey hPoint) =
+  Point (fromIntegral x) (fromIntegral y)
+  where
+    x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX hPoint
+    y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY hPoint
+hPubKeyToPubKey (H.PubKeyU _) = error "PubKeyU not supported in hPubKeyToPUbKey yet"
+
 
 main::IO ()    
 main = do
 
-  serverPubKey <- getServerPubKey "127.0.0.1" 30303
+  entropyPool <- createEntropyPool
+  let g = cprgCreate entropyPool :: SystemRNG
+      (myPriv, _) = generatePrivate g theCurve
+      myPublic = calculatePublic theCurve myPriv
+
+  otherPubKey <- fmap hPubKeyToPubKey $ getServerPubKey "127.0.0.1" 30303
   
   h <- connectTo "127.0.0.1" $ PortNumber 30303
 
   putStrLn "Connected"
-  entropyPool <- createEntropyPool
-  let g = cprgCreate entropyPool :: SystemRNG
-  let 
-      (myPriv, _) = generatePrivate g theCurve
-      myPublic = calculatePublic theCurve myPriv
-      H.PubKey point = serverPubKey
-      x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
-      y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
-      otherPublic = Point (fromIntegral x) (fromIntegral y)
-      SharedKey sharedKey = getShared theCurve myPriv otherPublic
+  let
+      SharedKey sharedKey = getShared theCurve myPriv otherPubKey
   
-  putStrLn $ "priv: " ++ showHex myPriv ""
-  putStrLn $ "shared: " ++ showHex sharedKey ""
-  putStrLn $ "public: " ++ hShowPoint point
-
-  putStrLn $ "serverPubKey: " ++ showPoint otherPublic
-
-  let 
-      cipherIV = 0::Word128
-
-      nonce = 20::Word256
-      msg = fromIntegral sharedKey `xor` nonce
+      cipherIV = 0::Word128 --TODO- Important!  Is this really supposed to be zero?
+      myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
+      msg = fromIntegral sharedKey `xor` (bytesToWord256 $ B.unpack myNonce)
   
-
-  putStrLn $ "msg: " ++ showHex msg ""
   sig <- H.withSource H.devURandom $ extSignMsg msg (H.PrvKey $ fromIntegral myPriv)
 
-  let ephemeral = getPubKeyFromSignature sig (fromInteger sharedKey `xor` nonce)
+  let ephemeral = getPubKeyFromSignature sig msg
   
       hepubk = SHA3.hash 256 $ B.pack $ pubKeyToBytes ephemeral
-      pubk = pointToBytes myPublic
-      theData = sigToBytes sig ++ B.unpack hepubk ++ pubk ++ word256ToBytes nonce ++ [0] -- [1..306-64-16-32]
+      pubk = B.pack $ pointToBytes myPublic
+      theData = B.pack (sigToBytes sig) `B.append`
+                hepubk `B.append`
+                pubk `B.append`
+                myNonce `B.append`
+                B.singleton 0
 
-  putStrLn $ "sigToBytes sig: " ++ show (length $ sigToBytes sig) ++ " " ++ show (sigToBytes sig)
-  putStrLn $ "B.unpack hepubk: " ++ show (length $ B.unpack hepubk) ++ ", " ++ show (B.unpack hepubk)
-  putStrLn $ "pubk: " ++ show (length pubk) ++ ", " ++ show pubk
-  putStrLn $ "word256ToBytes nonce: " ++ show (length $ word256ToBytes nonce) ++ ", " ++ show (word256ToBytes nonce)
-
-  let eceisMessage = encryptECEIS myPriv otherPublic cipherIV $ B.pack theData 
+      eceisMessage = encryptECEIS myPriv otherPubKey cipherIV theData 
 
   BL.hPut h $ BL.pack $ eceisMsgToBytes eceisMessage
 
-  --reply <- BL.hGet h 386
   reply <- BL.hGet h 210
 
   let replyECEISMsg = bytesToECEISMsg $ BL.unpack reply
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 
-  putStrLn $ "decrypted reply: " ++ show ackMsg
-  putStrLn $ "ackEphemeralPubKey: " ++ showPoint (ackEphemeralPubKey ackMsg)
-  putStrLn $ "ackNonce: " ++ showHex (ackNonce ackMsg) ""
-
 
 ------------------------------
 
-  let m_originated=False
+  let m_originated=False -- hardcoded for now, I can only connect as client
       add::B.ByteString->B.ByteString->B.ByteString
       add acc val | B.length acc ==32 && B.length val == 32 = SHA3.hash 256 $ val `B.append` acc
       add _ _ = error "add called with ByteString of length not 32"
 
-      m_remoteNonce=B.pack $ word256ToBytes nonce
+      m_remoteNonce=myNonce
       m_nonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
       m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
       m_ackCipher=BL.toStrict reply
   
-
-  putStrLn $ "m_originated=" ++ show m_originated
---  putStrLn $ "m_remoteEphemeral=" ++ show m_remoteEphemeral
-  putStrLn $ "m_nonce=" ++ BC.unpack (B16.encode m_nonce)
-  putStrLn $ "m_remoteNonce=" ++ BC.unpack (B16.encode m_remoteNonce)
-  putStrLn $ "m_authCipher=" ++ BC.unpack (B16.encode m_authCipher)
-  putStrLn $ "m_ackCipher=" ++ BC.unpack (B16.encode m_ackCipher)
---  putStrLn $ "secret=0x" ++ showHex secret ""
-
-
-  let 
---      SharedKey shared' = getShared theCurve secret m_remoteEphemeral
       SharedKey shared' = getShared theCurve myPriv (ackEphemeralPubKey ackMsg)
       shared = B.pack $ intToBytes shared'
 
-  putStrLn $ "server public: " ++ showPoint (eceisPubKey replyECEISMsg)
-  putStrLn $ "myPublic=" ++ showPoint myPublic
-  putStrLn $ "shared=0x" ++ BC.unpack (B16.encode shared)
-
-  
-  let macEncKey = 
-        m_remoteNonce `add`
-        m_nonce `add`
-        shared `add`
-        shared `add`
-        shared
-
-  let frameDecKey = 
+      frameDecKey = 
         m_remoteNonce `add`
         m_nonce `add`
         shared `add`
         shared
+
+      macEncKey = frameDecKey `add` shared
 
       ingressCipher = if m_originated then m_authCipher else m_ackCipher
       egressCipher = if m_originated then m_ackCipher else m_authCipher
@@ -321,8 +294,8 @@ main = do
     flip runStateT cState $ do
       sendMsg $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
 
-      msg <- recvMsg
-      liftIO $ putStrLn $ format msg
+      msg1 <- recvMsg
+      liftIO $ putStrLn $ format msg1
 
       sendMsg Ping
 

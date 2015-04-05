@@ -1,6 +1,7 @@
 
 module Frame (
   EthCryptState(..),
+  EthCryptM,
   encryptAndPutFrame,
   getAndDecryptFrame
   ) where

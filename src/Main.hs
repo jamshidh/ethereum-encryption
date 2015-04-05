@@ -175,6 +175,20 @@ decryptECEIS myPrvKey msg =
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
     eKey = B.take 16 key
 
+sendMsg::Message->EthCryptM ()
+sendMsg msg = do
+  let (pType, pData) = wireMessage2Obj msg
+  encryptAndPutFrame $
+    B.cons pType $ rlpSerialize pData
+
+recvMsg::EthCryptM Message
+recvMsg = do
+  frameData <- getAndDecryptFrame
+  
+  let packetType = fromInteger $ rlpDecode $ rlpDeserialize $ B.take 1 frameData
+      packetData = rlpDeserialize $ B.drop 1 frameData
+
+  return $ obj2WireMessage packetType packetData
 
 
 main::IO ()    
@@ -305,29 +319,14 @@ main = do
 
   _ <-
     flip runStateT cState $ do
-      let (pType, pData) = wireMessage2Obj $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
-      encryptAndPutFrame $ B.cons pType $ rlpSerialize pData
-      
+      sendMsg $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
 
-      frameData <- getAndDecryptFrame
-  
-      let packetType = 
-              case frameData `B.index` 0 of 
-                128 -> 0
-                x -> x
-      let packetData = rlpDeserialize $ B.drop 1 frameData
+      msg <- recvMsg
+      liftIO $ putStrLn $ format msg
 
-      liftIO $ putStrLn $ format $ obj2WireMessage packetType packetData
+      sendMsg Ping
 
-      let msg2 = Ping
-
-      let (pType2, pData2) = wireMessage2Obj msg2
-      encryptAndPutFrame $
-        B.cons pType2 $ rlpSerialize pData2 
-
-
-  qqqq <- BL.hGet h 1000
-
-  print qqqq
+      --msg2 <- recvMsg
+      --liftIO $ putStrLn $ format msg2
 
   return ()

@@ -29,6 +29,7 @@ import Blockchain.ExtWord
 import Blockchain.Format
 import Blockchain.Data.RLP
 import Blockchain.Data.Wire
+import Blockchain.SHA (SHA(..))
 
 import qualified AESCTR as AES
 import Frame
@@ -301,5 +302,22 @@ main = do
 
       msg2 <- recvMsg
       liftIO $ putStrLn $ format msg2
+
+      sendMsg Pong
+
+      msg3 <- recvMsg
+      liftIO $ putStrLn $ format msg3
+
+      sendMsg Status{protocolVersion=60, networkID="", totalDifficulty=131072, latestHash=SHA 0, genesisHash=SHA 0xfd4af92a79c7fc2fd8bf0d342f2e832e1d4f485c85b9152d2039e03bc604fdca}
+
+      msg3 <- recvMsg
+      liftIO $ putStrLn $ format msg3
+
+      msg3 <- recvMsg
+      liftIO $ putStrLn $ format msg3
+
+      msg3 <- recvMsg
+      liftIO $ putStrLn $ format msg3
+
 
   return ()

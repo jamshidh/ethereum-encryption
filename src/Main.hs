@@ -185,7 +185,7 @@ sendMsg msg = do
 recvMsg::EthCryptM Message
 recvMsg = do
   frameData <- getAndDecryptFrame
-  
+
   let packetType = fromInteger $ rlpDecode $ rlpDeserialize $ B.take 1 frameData
       packetData = rlpDeserialize $ B.drop 1 frameData
 
@@ -293,12 +293,13 @@ main = do
     flip runStateT cState $ do
       sendMsg $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
 
+
       msg1 <- recvMsg
       liftIO $ putStrLn $ format msg1
 
       sendMsg Ping
 
-      --msg2 <- recvMsg
-      --liftIO $ putStrLn $ format msg2
+      msg2 <- recvMsg
+      liftIO $ putStrLn $ format msg2
 
   return ()

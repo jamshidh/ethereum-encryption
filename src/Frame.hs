@@ -134,10 +134,14 @@ getAndDecryptFrame = do
   header <- decrypt headCipher
 
   let frameSize = 
-        (fromIntegral $ header `B.index` 0 `shiftL` 16) +
-        (fromIntegral $ header `B.index` 1 `shiftL` 8) +
-        (fromIntegral $ header `B.index` 2)
+        (fromIntegral (header `B.index` 0) `shiftL` 16) +
+        (fromIntegral (header `B.index` 1) `shiftL` 8) +
+        fromIntegral (header `B.index` 2)
 
+  liftIO $ putStrLn $ "frameSize: " ++ show (B.unpack $ B.take 3 header)
+  liftIO $ putStrLn $ "frameSize: " ++ show frameSize
+
+  
   frameCipher <- getBytes frameSize
   frameMAC <- getBytes 16
 
@@ -146,7 +150,4 @@ getAndDecryptFrame = do
 
   --when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
-  frame <- decrypt frameCipher
-
-
-  return frame
+  decrypt frameCipher

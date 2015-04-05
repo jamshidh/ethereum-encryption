@@ -8,8 +8,8 @@ module Frame (
   getAndDecryptFrame
   ) where
 
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Char8 as BC
+--import qualified Data.ByteString.Base16 as B16
+--import qualified Data.ByteString.Char8 as BC
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
@@ -158,4 +158,4 @@ getAndDecryptFrame = do
 
   when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
-  decrypt frameCipher
+  fmap (B.take frameSize) $ decrypt frameCipher

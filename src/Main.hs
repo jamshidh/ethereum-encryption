@@ -206,19 +206,11 @@ hPubKeyToPubKey (H.PubKey hPoint) =
 hPubKeyToPubKey (H.PubKeyU _) = error "PubKeyU not supported in hPubKeyToPUbKey yet"
 
 
-main::IO ()    
-main = do
-
-  entropyPool <- createEntropyPool
-  let g = cprgCreate entropyPool :: SystemRNG
-      (myPriv, _) = generatePrivate g theCurve
-      myPublic = calculatePublic theCurve myPriv
-
-  otherPubKey <- fmap hPubKeyToPubKey $ getServerPubKey "127.0.0.1" 30303
-  
+runEthCryptM::PrivateNumber->PublicPoint->EthCryptM a->IO a
+runEthCryptM myPriv otherPubKey f = do
+  let myPublic = calculatePublic theCurve myPriv
   h <- connectTo "127.0.0.1" $ PortNumber 30303
 
-  putStrLn "Connected"
   let
       SharedKey sharedKey = getShared theCurve myPriv otherPubKey
   
@@ -274,9 +266,6 @@ main = do
 
       ingressCipher = if m_originated then m_authCipher else m_ackCipher
       egressCipher = if m_originated then m_ackCipher else m_authCipher
-
--------------------------------
-
   let cState =
         EthCryptState {
           handle = h,
@@ -290,34 +279,44 @@ main = do
           ingressKey=macEncKey
           }
 
-  _ <-
-    flip runStateT cState $ do
-      sendMsg $ Hello {version=3, clientId="qqqq", capability=[ETH 60], port=30303, nodeId=0x1}
+  (ret, _) <- flip runStateT cState f
 
+  return ret
+  
+main::IO ()    
+main = do
+  entropyPool <- createEntropyPool
+  let g = cprgCreate entropyPool :: SystemRNG
+      (myPriv, _) = generatePrivate g theCurve
 
-      msg1 <- recvMsg
-      liftIO $ putStrLn $ format msg1
+  otherPubKey <- fmap hPubKeyToPubKey $ getServerPubKey "127.0.0.1" 30303
 
-      sendMsg Ping
+  runEthCryptM myPriv otherPubKey $ do
 
-      msg2 <- recvMsg
-      liftIO $ putStrLn $ format msg2
+    liftIO $ putStrLn "Connected"
 
-      sendMsg Pong
-
-      msg3 <- recvMsg
-      liftIO $ putStrLn $ format msg3
-
-      sendMsg Status{protocolVersion=60, networkID="", totalDifficulty=131072, latestHash=SHA 0, genesisHash=SHA 0xfd4af92a79c7fc2fd8bf0d342f2e832e1d4f485c85b9152d2039e03bc604fdca}
-
-      msg3 <- recvMsg
-      liftIO $ putStrLn $ format msg3
-
-      msg3 <- recvMsg
-      liftIO $ putStrLn $ format msg3
-
-      msg3 <- recvMsg
-      liftIO $ putStrLn $ format msg3
+    sendMsg Hello {
+      version=3,
+      clientId="dummyClient",
+      capability=[ETH 60],
+      port=30303,
+      nodeId=0x1
+      }
+    liftIO . putStrLn . format =<< recvMsg
+    sendMsg Ping
+    liftIO . putStrLn . format =<< recvMsg
+    sendMsg Pong
+    liftIO . putStrLn . format =<< recvMsg
+    sendMsg Status{
+      protocolVersion=60,
+      networkID="",
+      totalDifficulty=131072,
+      latestHash=SHA 0,
+      genesisHash=SHA 0xfd4af92a79c7fc2fd8bf0d342f2e832e1d4f485c85b9152d2039e03bc604fdca
+      }
+    liftIO . putStrLn . format =<< recvMsg
+    liftIO . putStrLn . format =<< recvMsg
+    liftIO . putStrLn . format =<< recvMsg
 
 
   return ()

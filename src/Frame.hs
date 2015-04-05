@@ -2,6 +2,8 @@
 module Frame (
   EthCryptState(..),
   EthCryptM,
+  getEgressMac,
+  getIngressMac,
   encryptAndPutFrame,
   getAndDecryptFrame
   ) where
@@ -65,6 +67,12 @@ decrypt input = do
   put cState{decryptState=aesState'}
   return output
 
+getEgressMac::EthCryptM B.ByteString
+getEgressMac = do
+  cState <- get
+  let mac = egressMAC cState
+  return $ B.take 16 $ SHA3.finalize mac
+
 rawUpdateEgressMac::B.ByteString->EthCryptM B.ByteString
 rawUpdateEgressMac value = do
   cState <- get
@@ -79,6 +87,12 @@ updateEgressMac value = do
   let mac = egressMAC cState
   rawUpdateEgressMac $
     value `bXor` (encryptECB (initAES $ egressKey cState) (B.take 16 $ SHA3.finalize mac))
+
+getIngressMac::EthCryptM B.ByteString
+getIngressMac = do
+  cState <- get
+  let mac = ingressMAC cState
+  return $ B.take 16 $ SHA3.finalize mac
 
 rawUpdateIngressMac::B.ByteString->EthCryptM B.ByteString
 rawUpdateIngressMac value = do
@@ -126,10 +140,8 @@ getAndDecryptFrame = do
   headCipher <- getBytes 16
   headMAC <- getBytes 16
 
-  --TODO- verify the HMAC, update ingressCipher
-
   expectedHeadMAC <- updateIngressMac headCipher
-  --when (expectedHeadMAC /= headMAC) $ error "oops, head mac isn't what I expected"
+  when (expectedHeadMAC /= headMAC) $ error "oops, head mac isn't what I expected"
 
   header <- decrypt headCipher
 
@@ -137,17 +149,13 @@ getAndDecryptFrame = do
         (fromIntegral (header `B.index` 0) `shiftL` 16) +
         (fromIntegral (header `B.index` 1) `shiftL` 8) +
         fromIntegral (header `B.index` 2)
-
-  liftIO $ putStrLn $ "frameSize: " ++ show (B.unpack $ B.take 3 header)
-  liftIO $ putStrLn $ "frameSize: " ++ show frameSize
-
+      frameBufferSize = (16 - (frameSize `mod` 16)) `mod` 16
   
-  frameCipher <- getBytes frameSize
+  frameCipher <- getBytes (frameSize + frameBufferSize)
   frameMAC <- getBytes 16
 
-  _ <- rawUpdateIngressMac frameCipher
-  expectedFrameMAC <- updateIngressMac headMAC
+  expectedFrameMAC <- updateIngressMac =<< rawUpdateIngressMac frameCipher
 
-  --when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
+  when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
   decrypt frameCipher

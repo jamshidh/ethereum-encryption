@@ -10,6 +10,8 @@ import Crypto.Hash.SHA256
 import qualified Crypto.Hash.SHA3 as SHA3
 import Crypto.PubKey.ECC.DH
 import Crypto.Types.PubKey.ECC
+import Data.Binary
+import Data.Binary.Get
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -94,6 +96,18 @@ data ECEISMessage =
     eceisCipher::B.ByteString,
     eceisMac::[Word8]
     } deriving (Show)
+
+instance Binary ECEISMessage where
+  get = do
+    mysteryByte <- getWord8
+    pubKeyX <- fmap toInteger $ getWord32be
+    pubKeyY <- fmap toInteger getWord32be
+    cipherIV <- fmap fromIntegral $ getWord16be
+    cipher <- getByteString 97
+    mac <- sequence $ replicate 32 getWord8
+    return $ ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac
+
+  put = undefined
 
 eceisMsgToBytes::ECEISMessage->[Word8]
 eceisMsgToBytes msg =
@@ -194,9 +208,9 @@ runEthCryptM myPriv otherPubKey f = do
 
   BL.hPut h $ BL.pack $ eceisMsgToBytes eceisMessage
 
-  reply <- BL.hGet h 210
-
-  let replyECEISMsg = bytesToECEISMsg $ BL.unpack reply
+  replyBytes <- B.hGet h 210
+--  let replyECEISMsg = decode $ BL.fromStrict replyBytes
+  let replyECEISMsg = bytesToECEISMsg $ B.unpack replyBytes
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 
@@ -211,7 +225,6 @@ runEthCryptM myPriv otherPubKey f = do
       otherNonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
       m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
-      m_ackCipher=BL.toStrict reply
   
       SharedKey shared' = getShared theCurve myPriv (ackEphemeralPubKey ackMsg)
       shared = B.pack $ intToBytes shared'
@@ -219,8 +232,8 @@ runEthCryptM myPriv otherPubKey f = do
       frameDecKey = myNonce `add` otherNonce `add` shared `add` shared
       macEncKey = frameDecKey `add` shared
 
-      ingressCipher = if m_originated then m_authCipher else m_ackCipher
-      egressCipher = if m_originated then m_ackCipher else m_authCipher
+      ingressCipher = if m_originated then m_authCipher else replyBytes
+      egressCipher = if m_originated then replyBytes else m_authCipher
   let cState =
         EthCryptState {
           handle = h,

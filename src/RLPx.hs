@@ -93,7 +93,7 @@ data ECEISMessage =
   ECEISMessage {
     eceisMysteryByte::Word8,
     eceisPubKey::Point,
-    eceisCipherIV::Word128,
+    eceisCipherIV::B.ByteString,
     eceisCipher::B.ByteString,
     eceisMac::[Word8]
     } deriving (Show)
@@ -103,7 +103,7 @@ instance Binary ECEISMessage where
     mysteryByte <- getWord8
     pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
     pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
-    cipherIV <- fmap (bytesToWord128 . B.unpack) $ getByteString 16
+    cipherIV <- getByteString 16
     cipher <- getByteString 97
     mac <- sequence $ replicate 32 getWord8
     return $ ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac
@@ -114,21 +114,9 @@ eceisMsgToBytes::ECEISMessage->[Word8]
 eceisMsgToBytes msg =
   [eceisMysteryByte msg] ++
   pointToBytes (eceisPubKey msg) ++
-  word128ToBytes (eceisCipherIV msg) ++
+  B.unpack (eceisCipherIV msg) ++
   B.unpack (eceisCipher msg) ++
   eceisMac msg
-
-bytesToECEISMsg::[Word8]->ECEISMessage
-bytesToECEISMsg (mysteryByte:rest) | cipherLen >= 0 =
-  ECEISMessage {
-    eceisMysteryByte=mysteryByte,
-    eceisPubKey=bytesToPoint $ take 64 rest,
-    eceisCipherIV=bytesToWord128 $ take 16 $ drop 64 rest,
-    eceisCipher=B.pack $ take cipherLen $ drop 80 rest,
-    eceisMac=drop (length rest - 32) rest
-    }
-  where cipherLen = length rest - 64 - 16 - 32
-bytesToECEISMsg _ = error "empty byte list in call to bytesToECEISMsg"
 
 data AckMessage =
   AckMessage {
@@ -155,14 +143,14 @@ bytesToAckMsg _ = error "wrong number of bytes in call to bytesToECEISMsg"
 encrypt::B.ByteString->B.ByteString->B.ByteString->B.ByteString
 encrypt key cipherIV input = encryptCTR (initAES key) cipherIV input 
 
-encryptECEIS::PrivateNumber->PublicPoint->Word128->B.ByteString->ECEISMessage
+encryptECEIS::PrivateNumber->PublicPoint->B.ByteString->B.ByteString->ECEISMessage
 encryptECEIS myPrvKey otherPubKey cipherIV msg =
   ECEISMessage {
     eceisMysteryByte = 2,
     eceisPubKey=calculatePublic theCurve myPrvKey,
     eceisCipherIV=cipherIV,
     eceisCipher=cipher,
-    eceisMac=hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) cipherWithIV
+    eceisMac=hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) (B.unpack cipherWithIV)
     }
   where
     SharedKey sharedKey = getShared theCurve myPrvKey otherPubKey
@@ -170,12 +158,12 @@ encryptECEIS myPrvKey otherPubKey cipherIV msg =
     eKey = B.take 16 key
     mKeyMaterial = B.take 16 $ B.drop 16 key
     mKey = hash mKeyMaterial
-    cipher = encrypt eKey (B.pack $ word128ToBytes cipherIV) msg
-    cipherWithIV = word128ToBytes cipherIV ++ B.unpack cipher
+    cipher = encrypt eKey cipherIV msg
+    cipherWithIV = cipherIV `B.append` cipher
 
 decryptECEIS::PrivateNumber->ECEISMessage->B.ByteString
 decryptECEIS myPrvKey msg =
-  decryptCTR (initAES eKey) (B.pack $ word128ToBytes $ eceisCipherIV msg) (eceisCipher msg)
+  decryptCTR (initAES eKey) (eceisCipherIV msg) (eceisCipher msg)
   where
     SharedKey sharedKey = getShared theCurve myPrvKey (eceisPubKey msg)
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
@@ -189,7 +177,7 @@ runEthCryptM myPriv otherPubKey f = do
   let
       SharedKey sharedKey = getShared theCurve myPriv otherPubKey
   
-      cipherIV = 0::Word128 --TODO- Important!  Is this really supposed to be zero?
+      cipherIV = B.replicate 16 0 --TODO- Important!  Is this really supposed to be zero?
       myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
       msg = fromIntegral sharedKey `xor` (bytesToWord256 $ B.unpack myNonce)
   

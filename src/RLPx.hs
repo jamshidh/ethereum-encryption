@@ -4,6 +4,7 @@ module RLPx (
   runEthCryptM
   ) where
 
+import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 import Crypto.Cipher.AES
 import Crypto.Hash.SHA256
@@ -100,9 +101,9 @@ data ECEISMessage =
 instance Binary ECEISMessage where
   get = do
     mysteryByte <- getWord8
-    pubKeyX <- fmap toInteger $ getWord32be
-    pubKeyY <- fmap toInteger getWord32be
-    cipherIV <- fmap fromIntegral $ getWord16be
+    pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
+    pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
+    cipherIV <- fmap (bytesToWord128 . B.unpack) $ getByteString 16
     cipher <- getByteString 97
     mac <- sequence $ replicate 32 getWord8
     return $ ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac
@@ -209,8 +210,7 @@ runEthCryptM myPriv otherPubKey f = do
   BL.hPut h $ BL.pack $ eceisMsgToBytes eceisMessage
 
   replyBytes <- B.hGet h 210
---  let replyECEISMsg = decode $ BL.fromStrict replyBytes
-  let replyECEISMsg = bytesToECEISMsg $ B.unpack replyBytes
+  let replyECEISMsg = decode $ BL.fromStrict replyBytes
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 

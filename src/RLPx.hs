@@ -83,8 +83,7 @@ sigToBytes (ExtendedSignature signature yIsOdd) =
   [if yIsOdd then 1 else 0]
 
 bXor::B.ByteString->B.ByteString->B.ByteString
-bXor x y | B.length x == B.length y =
-  B.pack $ map (uncurry xor) $ zip (B.unpack x) (B.unpack y) 
+bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y
 bXor _ _ = error "bXor called with two ByteStrings of different length"
 
 data ECEISMessage =

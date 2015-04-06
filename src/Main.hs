@@ -20,9 +20,9 @@ import Blockchain.Data.RLP
 import Blockchain.Data.Wire
 import Blockchain.SHA (SHA(..))
 
-import Frame
-import UDP
-import RLPx
+import Blockchain.Frame
+import Blockchain.UDP
+import Blockchain.RLPx
 
 --import Debug.Trace
 

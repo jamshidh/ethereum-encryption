@@ -1,5 +1,5 @@
 
-module AESCTR (
+module Blockchain.AESCTR (
   encrypt,
   decrypt,
   AESCTRState(..),

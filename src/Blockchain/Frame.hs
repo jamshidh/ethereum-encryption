@@ -1,5 +1,5 @@
 
-module Frame (
+module Blockchain.Frame (
   EthCryptState(..),
   EthCryptM,
   getEgressMac,
@@ -19,7 +19,7 @@ import Data.Bits
 import qualified Data.ByteString as B
 import System.IO
 
-import qualified AESCTR as AES
+import qualified Blockchain.AESCTR as AES
 
 bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y 
@@ -39,19 +39,19 @@ data EthCryptState =
     ingressKey::B.ByteString
     }
 
-type EthCryptM = StateT EthCryptState IO
+type EthCryptM a = StateT EthCryptState a
 
-putBytes::B.ByteString->EthCryptM ()
+putBytes::MonadIO m=>B.ByteString->EthCryptM m ()
 putBytes bytes = do
   cState <- get
   liftIO $ B.hPut (handle cState) bytes
 
-getBytes::Int->EthCryptM B.ByteString
+getBytes::MonadIO m=>Int->EthCryptM m B.ByteString
 getBytes size = do
   cState <- get
   liftIO $ B.hGet (handle cState) size
   
-encrypt::B.ByteString->EthCryptM B.ByteString
+encrypt::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 encrypt input = do
   cState <- get
   let aesState = encryptState cState
@@ -59,7 +59,7 @@ encrypt input = do
   put cState{encryptState=aesState'}
   return output
 
-decrypt::B.ByteString->EthCryptM B.ByteString
+decrypt::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 decrypt input = do
   cState <- get
   let aesState = decryptState cState
@@ -67,13 +67,13 @@ decrypt input = do
   put cState{decryptState=aesState'}
   return output
 
-getEgressMac::EthCryptM B.ByteString
+getEgressMac::MonadIO m=>EthCryptM m B.ByteString
 getEgressMac = do
   cState <- get
   let mac = egressMAC cState
   return $ B.take 16 $ SHA3.finalize mac
 
-rawUpdateEgressMac::B.ByteString->EthCryptM B.ByteString
+rawUpdateEgressMac::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 rawUpdateEgressMac value = do
   cState <- get
   let mac = egressMAC cState
@@ -81,20 +81,20 @@ rawUpdateEgressMac value = do
   put cState{egressMAC=mac'}
   return $ B.take 16 $ SHA3.finalize mac'
 
-updateEgressMac::B.ByteString->EthCryptM B.ByteString
+updateEgressMac::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 updateEgressMac value = do
   cState <- get
   let mac = egressMAC cState
   rawUpdateEgressMac $
     value `bXor` (encryptECB (initAES $ egressKey cState) (B.take 16 $ SHA3.finalize mac))
 
-getIngressMac::EthCryptM B.ByteString
+getIngressMac::MonadIO m=>EthCryptM m B.ByteString
 getIngressMac = do
   cState <- get
   let mac = ingressMAC cState
   return $ B.take 16 $ SHA3.finalize mac
 
-rawUpdateIngressMac::B.ByteString->EthCryptM B.ByteString
+rawUpdateIngressMac::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 rawUpdateIngressMac value = do
   cState <- get
   let mac = ingressMAC cState
@@ -102,14 +102,14 @@ rawUpdateIngressMac value = do
   put cState{ingressMAC=mac'}
   return $ B.take 16 $ SHA3.finalize mac'
 
-updateIngressMac::B.ByteString->EthCryptM B.ByteString
+updateIngressMac::MonadIO m=>B.ByteString->EthCryptM m B.ByteString
 updateIngressMac value = do
   cState <- get
   let mac = ingressMAC cState
   rawUpdateIngressMac $
     value `bXor` (encryptECB (initAES $ ingressKey cState) (B.take 16 $ SHA3.finalize mac))
 
-encryptAndPutFrame::B.ByteString->EthCryptM ()
+encryptAndPutFrame::MonadIO m=>B.ByteString->EthCryptM m ()
 encryptAndPutFrame bytes = do
   let frameSize = B.length bytes
       frameBuffSize = (16 - frameSize `mod` 16) `mod` 16
@@ -135,7 +135,7 @@ encryptAndPutFrame bytes = do
   putBytes frameCipher
   putBytes frameMAC
 
-getAndDecryptFrame::EthCryptM B.ByteString
+getAndDecryptFrame::MonadIO m=>EthCryptM m B.ByteString
 getAndDecryptFrame = do
   headCipher <- getBytes 16
   headMAC <- getBytes 16
@@ -158,4 +158,5 @@ getAndDecryptFrame = do
 
   when (expectedFrameMAC /= frameMAC) $ error "oops, frame mac isn't what I expected"
 
-  fmap (B.take frameSize) $ decrypt frameCipher
+  fullFrame <- decrypt frameCipher
+  return $ B.take frameSize fullFrame

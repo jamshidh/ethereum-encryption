@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Handshake (
+module Blockchain.Handshake (
   AckMessage(..),
   getHandshakeBytes,
   bytesToAckMsg,

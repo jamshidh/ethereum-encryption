@@ -1,5 +1,5 @@
 
-module UDP (
+module Blockchain.UDP (
   getServerPubKey
   ) where
 
@@ -155,7 +155,7 @@ pubKeyToNodeID (H.PubKey point) =
 pubKeyToNodeID (H.PubKeyU _) = error "Missing case in pubKeyToNodeId: PubKeyU"
 -}
 
-getServerPubKey::String->Word16->IO H.PubKey
+getServerPubKey::String->PortNumber->IO H.PubKey
 getServerPubKey domain port = do
 
   --let theCurve = getCurveByName Crypto.Types.PubKey.ECC.SEC_p256k1

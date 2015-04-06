@@ -1,9 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RLPx (
+module Blockchain.RLPx (
   runEthCryptM
   ) where
 
+import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 import Crypto.Cipher.AES
 import qualified Crypto.Hash.SHA3 as SHA3
@@ -17,9 +18,9 @@ import Network
 
 import Blockchain.ExtWord
 
-import qualified AESCTR as AES
-import Frame
-import Handshake
+import qualified Blockchain.AESCTR as AES
+import Blockchain.Frame
+import Blockchain.Handshake
 
 --import Debug.Trace
 
@@ -48,18 +49,18 @@ bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y
 bXor _ _ = error "bXor called with two ByteStrings of different length"
 
-runEthCryptM::PrivateNumber->PublicPoint->EthCryptM a->IO a
-runEthCryptM myPriv otherPubKey f = do
-  h <- connectTo "127.0.0.1" $ PortNumber 30303
+runEthCryptM::MonadIO m=>PrivateNumber->PublicPoint->String->PortNumber->EthCryptM m a->m a
+runEthCryptM myPriv otherPubKey ipAddress thePort f = do
+  h <- liftIO $ connectTo ipAddress (PortNumber thePort)
 
 
   let myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
-  handshakeInitBytes <- getHandshakeBytes myPriv otherPubKey myNonce
+  handshakeInitBytes <- liftIO $ getHandshakeBytes myPriv otherPubKey myNonce
       
 
-  B.hPut h handshakeInitBytes
+  liftIO $ B.hPut h handshakeInitBytes
 
-  handshakeReplyBytes <- B.hGet h 210
+  handshakeReplyBytes <- liftIO $ B.hGet h 210
   let replyECEISMsg = decode $ BL.fromStrict handshakeReplyBytes
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg

@@ -4,7 +4,6 @@ module RLPx (
   runEthCryptM
   ) where
 
-import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 import Crypto.Cipher.AES
 import Crypto.Hash.SHA256
@@ -13,12 +12,12 @@ import Crypto.PubKey.ECC.DH
 import Crypto.Types.PubKey.ECC
 import Data.Binary
 import Data.Binary.Get
+import Data.Binary.Put
 import Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.HMAC
 import Data.Maybe
-import Data.Word
 import Network
 import qualified Network.Haskoin.Internals as H
 
@@ -56,8 +55,6 @@ hShowPoint point =
 
 ctr::[Word8]
 ctr=[0,0,0,1]
-
---z = replicate 32 0
 
 s1::[Word8]
 s1 = []
@@ -108,15 +105,14 @@ instance Binary ECEISMessage where
     mac <- sequence $ replicate 32 getWord8
     return $ ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac
 
-  put = undefined
-
-eceisMsgToBytes::ECEISMessage->[Word8]
-eceisMsgToBytes msg =
-  [eceisMysteryByte msg] ++
-  pointToBytes (eceisPubKey msg) ++
-  B.unpack (eceisCipherIV msg) ++
-  B.unpack (eceisCipher msg) ++
-  eceisMac msg
+  put (ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac) = do
+    putWord8 mysteryByte
+    putByteString (B.pack . word256ToBytes . fromInteger $ pubKeyX)
+    putByteString (B.pack . word256ToBytes . fromInteger $ pubKeyY)
+    putByteString cipherIV
+    putByteString cipher
+    sequence_ $ map putWord8 mac
+  put x = error $ "unsupported case in call to put for ECEISMessage: " ++ show x
 
 data AckMessage =
   AckMessage {
@@ -193,12 +189,13 @@ runEthCryptM myPriv otherPubKey f = do
                 myNonce `B.append`
                 B.singleton 0
 
-      eceisMessage = encryptECEIS myPriv otherPubKey cipherIV theData 
+      handshakeInitBytes =
+        BL.toStrict $ encode $ encryptECEIS myPriv otherPubKey cipherIV theData 
 
-  BL.hPut h $ BL.pack $ eceisMsgToBytes eceisMessage
+  B.hPut h handshakeInitBytes
 
-  replyBytes <- B.hGet h 210
-  let replyECEISMsg = decode $ BL.fromStrict replyBytes
+  handshakeReplyBytes <- B.hGet h 210
+  let replyECEISMsg = decode $ BL.fromStrict handshakeReplyBytes
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 
@@ -212,16 +209,14 @@ runEthCryptM myPriv otherPubKey f = do
 
       otherNonce=B.pack $ word256ToBytes $ ackNonce ackMsg
 
-      m_authCipher=B.pack $ eceisMsgToBytes eceisMessage
-  
       SharedKey shared' = getShared theCurve myPriv (ackEphemeralPubKey ackMsg)
       shared = B.pack $ intToBytes shared'
 
       frameDecKey = myNonce `add` otherNonce `add` shared `add` shared
       macEncKey = frameDecKey `add` shared
 
-      ingressCipher = if m_originated then m_authCipher else replyBytes
-      egressCipher = if m_originated then replyBytes else m_authCipher
+      ingressCipher = if m_originated then handshakeInitBytes else handshakeReplyBytes
+      egressCipher = if m_originated then handshakeReplyBytes else handshakeInitBytes
   let cState =
         EthCryptState {
           handle = h,

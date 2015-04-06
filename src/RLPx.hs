@@ -165,32 +165,37 @@ decryptECEIS myPrvKey msg =
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
     eKey = B.take 16 key
 
-runEthCryptM::PrivateNumber->PublicPoint->EthCryptM a->IO a
-runEthCryptM myPriv otherPubKey f = do
-  let myPublic = calculatePublic theCurve myPriv
-  h <- connectTo "127.0.0.1" $ PortNumber 30303
-
+getHandshakeBytes::PrivateNumber->PublicPoint->B.ByteString->IO B.ByteString
+getHandshakeBytes myPriv otherPubKey myNonce = do
   let
-      SharedKey sharedKey = getShared theCurve myPriv otherPubKey
-  
-      cipherIV = B.replicate 16 0 --TODO- Important!  Is this really supposed to be zero?
-      myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
-      msg = fromIntegral sharedKey `xor` (bytesToWord256 $ B.unpack myNonce)
-  
+    myPublic = calculatePublic theCurve myPriv
+    SharedKey sharedKey = getShared theCurve myPriv otherPubKey
+    cipherIV = B.replicate 16 0 --TODO- Important!  Is this really supposed to be zero?
+    msg = fromIntegral sharedKey `xor` (bytesToWord256 $ B.unpack myNonce)
   sig <- H.withSource H.devURandom $ extSignMsg msg (H.PrvKey $ fromIntegral myPriv)
-
-  let ephemeral = getPubKeyFromSignature sig msg
-  
-      hepubk = SHA3.hash 256 $ B.pack $ pubKeyToBytes ephemeral
-      pubk = B.pack $ pointToBytes myPublic
-      theData = B.pack (sigToBytes sig) `B.append`
+  let
+    ephemeral = getPubKeyFromSignature sig msg
+    hepubk = SHA3.hash 256 $ B.pack $ pubKeyToBytes ephemeral
+    pubk = B.pack $ pointToBytes myPublic
+    theData = B.pack (sigToBytes sig) `B.append`
                 hepubk `B.append`
                 pubk `B.append`
                 myNonce `B.append`
                 B.singleton 0
 
-      handshakeInitBytes =
-        BL.toStrict $ encode $ encryptECEIS myPriv otherPubKey cipherIV theData 
+
+  return $ BL.toStrict $ encode $ encryptECEIS myPriv otherPubKey cipherIV theData 
+
+
+
+runEthCryptM::PrivateNumber->PublicPoint->EthCryptM a->IO a
+runEthCryptM myPriv otherPubKey f = do
+  h <- connectTo "127.0.0.1" $ PortNumber 30303
+
+
+  let myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
+  handshakeInitBytes <- getHandshakeBytes myPriv otherPubKey myNonce
+      
 
   B.hPut h handshakeInitBytes
 
@@ -198,7 +203,6 @@ runEthCryptM myPriv otherPubKey f = do
   let replyECEISMsg = decode $ BL.fromStrict handshakeReplyBytes
 
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
-
 
 ------------------------------
 

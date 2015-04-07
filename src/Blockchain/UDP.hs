@@ -8,6 +8,7 @@ import Network.Socket
 import Control.Exception
 import Control.Monad.IO.Class
 import qualified Crypto.Hash.SHA3 as SHA3
+import Crypto.Types.PubKey.ECC
 import Data.Binary
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Base16 as B16
@@ -27,6 +28,19 @@ import Blockchain.Format
 import Blockchain.SHA
 
 --import Debug.Trace
+
+--I need to use two definitions of PubKey (internally they represent the same thing)
+--The one in the Haskoin package allows me to recover signatures.
+--The one in the crypto packages let me do AES encryption.
+--At some point I have to convert from one PubKey to the other, this function
+--lets me to that.
+hPubKeyToPubKey::H.PubKey->Point
+hPubKeyToPubKey (H.PubKey hPoint) =
+  Point (fromIntegral x) (fromIntegral y)
+  where
+    x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX hPoint
+    y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY hPoint
+hPubKeyToPubKey (H.PubKeyU _) = error "PubKeyU not supported in hPubKeyToPUbKey yet"
 
 encrypt::H.PrvKey->Word256->H.SecretT IO ExtendedSignature
 encrypt prvKey' theHash = do
@@ -155,7 +169,7 @@ pubKeyToNodeID (H.PubKey point) =
 pubKeyToNodeID (H.PubKeyU _) = error "Missing case in pubKeyToNodeId: PubKeyU"
 -}
 
-getServerPubKey::String->PortNumber->IO H.PubKey
+getServerPubKey::String->PortNumber->IO Point
 getServerPubKey domain port = do
 
   --let theCurve = getCurveByName Crypto.Types.PubKey.ECC.SEC_p256k1
@@ -179,7 +193,7 @@ getServerPubKey domain port = do
                 _ <- connect s (addrAddress serveraddr) >> return s
                 socketToHandle s ReadWriteMode
 
-              talk::H.PrvKey->Handle->IO H.PubKey
+              talk::H.PrvKey->Handle->IO Point
               talk prvKey' h = do
                 let (theType, theRLP) = ndPacketToRLP $
                               Ping 3 "127.0.0.1" 4000 1451606400
@@ -203,4 +217,4 @@ getServerPubKey domain port = do
                 --B.hGet h 4 >>= \msg -> putStrLn $ "Received " ++ show msg
                 pubKey <- BL.hGetContents h >>= processDataStream
 
-                return pubKey
+                return $ hPubKeyToPubKey pubKey

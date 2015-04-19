@@ -4,6 +4,7 @@ module Blockchain.RLPx (
   runEthCryptM
   ) where
 
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.State
 import Crypto.Cipher.AES
@@ -63,6 +64,8 @@ runEthCryptM myPriv otherPubKey ipAddress thePort f = do
   handshakeReplyBytes <- liftIO $ B.hGet h 210
   let replyECEISMsg = decode $ BL.fromStrict handshakeReplyBytes
 
+  when (B.length handshakeReplyBytes /= 210) $ error "handshake reply didn't contain enough bytes"
+  
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 
 ------------------------------
@@ -82,6 +85,8 @@ runEthCryptM myPriv otherPubKey ipAddress thePort f = do
 
       ingressCipher = if m_originated then handshakeInitBytes else handshakeReplyBytes
       egressCipher = if m_originated then handshakeReplyBytes else handshakeInitBytes
+
+
   let cState =
         EthCryptState {
           handle = h,

@@ -136,7 +136,7 @@ encrypt key cipherIV input = encryptCTR (initAES key) cipherIV input
 encryptECEIS::PrivateNumber->PublicPoint->B.ByteString->B.ByteString->ECEISMessage
 encryptECEIS myPrvKey otherPubKey cipherIV msg =
   ECEISMessage {
-    eceisMysteryByte = 2,
+    eceisMysteryByte = 4,
     eceisPubKey=calculatePublic theCurve myPrvKey,
     eceisCipherIV=cipherIV,
     eceisCipher=cipher,

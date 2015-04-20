@@ -82,7 +82,7 @@ sigToBytes (ExtendedSignature signature yIsOdd) =
 
 data ECEISMessage =
   ECEISMessage {
-    eceisMysteryByte::Word8,
+    eceisForm::Word8, --See ansi x9.62 section 4.3.6 (I currently only handle form=4)
     eceisPubKey::Point,
     eceisCipherIV::B.ByteString,
     eceisCipher::B.ByteString,
@@ -91,16 +91,16 @@ data ECEISMessage =
 
 instance Binary ECEISMessage where
   get = do
-    mysteryByte <- getWord8
+    form <- getWord8
     pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
     pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
     cipherIV <- getByteString 16
     cipher <- getByteString 97
     mac <- sequence $ replicate 32 getWord8
-    return $ ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac
+    return $ ECEISMessage form (Point pubKeyX pubKeyY) cipherIV cipher mac
 
-  put (ECEISMessage mysteryByte (Point pubKeyX pubKeyY) cipherIV cipher mac) = do
-    putWord8 mysteryByte
+  put (ECEISMessage form (Point pubKeyX pubKeyY) cipherIV cipher mac) = do
+    putWord8 form
     putByteString (B.pack . word256ToBytes . fromInteger $ pubKeyX)
     putByteString (B.pack . word256ToBytes . fromInteger $ pubKeyY)
     putByteString cipherIV
@@ -136,7 +136,7 @@ encrypt key cipherIV input = encryptCTR (initAES key) cipherIV input
 encryptECEIS::PrivateNumber->PublicPoint->B.ByteString->B.ByteString->ECEISMessage
 encryptECEIS myPrvKey otherPubKey cipherIV msg =
   ECEISMessage {
-    eceisMysteryByte = 4,
+    eceisForm = 4, --form=4 indicates pubkey is not compressed
     eceisPubKey=calculatePublic theCurve myPrvKey,
     eceisCipherIV=cipherIV,
     eceisCipher=cipher,

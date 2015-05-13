@@ -73,6 +73,7 @@ extSignMsg _ (PrvKeyU 0) = error "signMsg: Invalid private key 0"
 extSignMsg h d = do
     -- 4.1.3.1
     (k,p) <- genKeyPair
+
     case unsafeExtSignMsg h (prvKeyFieldN d) (k,p) of
         (Just sig) -> return sig
         -- If signing failed, retry with a new nonce

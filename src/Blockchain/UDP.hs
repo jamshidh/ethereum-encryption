@@ -1,6 +1,13 @@
 
 module Blockchain.UDP (
-  getServerPubKey
+  getServerPubKey,
+  processDataStream,
+  ndPacketToRLP,
+  rlpToNDPacket,
+  NodeDiscoveryPacket(..),
+  Endpoint(..),
+  Neighbor(..),
+  NodeID(..)
   ) where
 
 import Network.Socket
@@ -53,53 +60,50 @@ Just prvKey = H.makePrvKey 0xac3e8ce2ef31c3f45d5da860bcd9aee4b37a05c5a3ddee40dd0
 data RawNodeDiscoveryPacket =
   RawNDPacket SHA ExtendedSignature Integer RLPObject deriving (Show)
 
-
-{-
-instance Binary ExtendedSignature where
-  get = do
-{-    v <- getWord8
-    r <- getWord64be
-    s <- getWord64be-}
-    let r = 0; s = 0; v = 27
-    return $ ExtendedSignature (Signature (fromIntegral r) (fromIntegral s)) (case v of 27 -> True; 28 -> False)
-  put = error "undefined put ExtendedSignature"
-  
-instance Binary RLPObject where
-  get = do
-  put = error "undefined put RLPObject"
-  
-instance Binary RawNodeDiscoveryPacket where
-  get = do
-    theHash <- get
-    theSignature <- get
-    theType <- getWord64be
-    theData <- get
-    return $ RawNDPacket (trace "qq1" theHash) (trace "qq2" theSignature) (trace "qq3" (fromIntegral theType)) (trace "qq4" theData)
-  put = error "undefined put RawNodeDiscoveryPacket"
-
--}
-
-
 data NodeDiscoveryPacket =
-  Ping Integer String Word16 Integer |
-  Pong String Integer |
-  FindNode String Integer |
-  Neighbors String Word16 String Integer deriving (Show)
+  Ping Integer Endpoint Endpoint Integer |
+  Pong Endpoint Integer Integer |
+  FindNode NodeID Integer |
+  Neighbors [Neighbor] Integer deriving (Show,Read,Eq)
+
+data Endpoint = Endpoint String Word16 Word16 deriving (Show,Read,Eq)
+data Neighbor = Neighbor Endpoint NodeID deriving (Show,Read,Eq)
+
 
 
 rlpToNDPacket::Word8->RLPObject->NodeDiscoveryPacket
-rlpToNDPacket 0x1 (RLPArray [protocolVersion, ip, port, expiration]) =
-    Ping (rlpDecode protocolVersion) (rlpDecode ip) (fromInteger $ rlpDecode port) (rlpDecode expiration)
-rlpToNDPacket 0x2 (RLPArray [replyToken, expiration]) = Pong (rlpDecode replyToken) (rlpDecode expiration)
-rlpToNDPacket 0x3 (RLPArray [target, expiration]) = FindNode (rlpDecode target) (fromInteger $ rlpDecode expiration)
-rlpToNDPacket 0x4 (RLPArray [ip, port, id', expiration]) = Neighbors (rlpDecode ip) (fromInteger $ rlpDecode port) (rlpDecode id') (rlpDecode expiration)
+rlpToNDPacket 0x1 (RLPArray [protocolVersion, RLPArray [ ipFrom, udpPortFrom, tcpPortFrom], RLPArray [ipTo, udpPortTo, tcpPortTo], expiration]) =
+    Ping (rlpDecode protocolVersion) (Endpoint (rlpDecode ipFrom) (fromInteger $ rlpDecode udpPortFrom) (fromInteger $ rlpDecode tcpPortFrom))
+                                     (Endpoint (rlpDecode ipTo) (fromInteger $ rlpDecode udpPortTo) (fromInteger $ rlpDecode tcpPortTo))
+                                     (rlpDecode expiration)
+rlpToNDPacket 0x2 (RLPArray [ RLPArray [ ipFrom, udpPortFrom, tcpPortFrom ], replyToken, expiration]) = Pong (Endpoint (rlpDecode ipFrom)
+                                                                       (fromInteger $ rlpDecode udpPortFrom)
+                                                                       (fromInteger $ rlpDecode tcpPortFrom))
+                                                                       (rlpDecode replyToken)
+                                                                       (rlpDecode expiration)
+--rlpToNDPacket 0x3 (RLPArray [target, expiration]) = FindNode (rlpDecode target) (fromInteger $ rlpDecode expiration)
+--rlpToNDPacket 0x4 (RLPArray [ip, port, id', expiration]) = Neighbors (rlpDecode ip) (fromInteger $ rlpDecode port) (rlpDecode id') (rlpDecode expiration)
 rlpToNDPacket v x = error $ "Missing case in rlpToNDPacket: " ++ show v ++ ", " ++ show x
 
 ndPacketToRLP::NodeDiscoveryPacket->(Word8, RLPObject)
-ndPacketToRLP (Ping ver ip port expiration) = (1, RLPArray [rlpEncode ver, rlpEncode ip, rlpEncode $ toInteger port, rlpEncode expiration])
-ndPacketToRLP (Pong tok expiration) = (2, RLPArray [rlpEncode tok, rlpEncode expiration])
-ndPacketToRLP (FindNode target expiration) = (3, RLPArray [rlpEncode target, rlpEncode expiration])
-ndPacketToRLP (Neighbors ip port id' expiration) = (4, RLPArray [rlpEncode ip, rlpEncode $ toInteger port, rlpEncode id', rlpEncode expiration])
+ndPacketToRLP (Ping ver (Endpoint ipFrom udpPortFrom tcpPortFrom) (Endpoint ipTo udpPortTo tcpPortTo) expiration) =
+  (1, RLPArray [rlpEncode ver,
+                RLPArray [
+                rlpEncode ipFrom,
+                rlpEncode $ toInteger udpPortFrom,
+                rlpEncode $ toInteger tcpPortFrom],
+                RLPArray [
+                rlpEncode ipTo,
+                rlpEncode $ toInteger udpPortTo,
+                rlpEncode $ toInteger tcpPortTo],
+                rlpEncode expiration])
+ndPacketToRLP (Pong (Endpoint ipFrom udpPortFrom tcpPortFrom) tok expiration) = (2, RLPArray [RLPArray [ rlpEncode ipFrom,
+                                                                                                         rlpEncode $ toInteger udpPortFrom,
+                                                                                                         rlpEncode $ toInteger tcpPortFrom],
+                                                                                                         rlpEncode tok,
+                                                                                                         rlpEncode expiration])
+--ndPacketToRLP (FindNode target expiration) = (3, RLPArray [rlpEncode target, rlpEncode expiration])
+--ndPacketToRLP (Neighbors ip port id' expiration) = (4, RLPArray [rlpEncode ip, rlpEncode $ toInteger port, rlpEncode id', rlpEncode expiration])
 
 --showPoint::H.Point->String
 --showPoint (H.Point x y) = "Point 0x" ++ showHex x "" ++ " 0x" ++ showHex y ""
@@ -133,9 +137,11 @@ processDataStream'
                           s17,s18,s19,s20,s21,s22,s23,s24,s25,s26,s27,s28,s29,s30,s31,s32]
       yIsOdd = v == 1 -- 0x1c
       signature = ExtendedSignature (H.Signature (fromIntegral r) (fromIntegral s)) yIsOdd
-  
+    
 --  putStrLn $ show (pretty theHash) ++ ", " ++ show theType
 
+  
+  
   let (rlp, _) = rlpSplit rest
 
   let SHA messageHash = hash $ B.pack $ [theType] ++ B.unpack (rlpSerialize rlp)
@@ -154,7 +160,7 @@ processDataStream::BL.ByteString->IO H.PubKey
 processDataStream x = processDataStream' . BL.unpack $ x
 
 
-newtype NodeID = NodeID B.ByteString deriving (Show)
+newtype NodeID = NodeID B.ByteString deriving (Show, Read, Eq)
 
 instance Format NodeID where
   format (NodeID x) = BC.unpack $ B16.encode x
@@ -196,7 +202,7 @@ getServerPubKey domain port = do
               talk::H.PrvKey->Handle->IO Point
               talk prvKey' h = do
                 let (theType, theRLP) = ndPacketToRLP $
-                              Ping 3 "127.0.0.1" 4000 1451606400
+                              Ping 4 (Endpoint "127.0.0.1" (fromIntegral $ port) 30303) (Endpoint "127.0.0.1" (fromIntegral $ port) 30303) 1451606400
 --                              FindNode "qq" 1451606400
                     theData = B.unpack $ rlpSerialize theRLP
                     SHA theMsgHash = hash $ B.pack $ (theType:theData)
@@ -211,6 +217,13 @@ getServerPubKey domain port = do
                     theHash = B.unpack $ SHA3.hash 256 $ B.pack $ theSignature ++ [theType] ++ theData
                 --putStrLn $ "my address is " ++ show (pretty $ prvKey2Address prvKey')
                 --let nodeId = pubKeyToNodeID $ H.derivePubKey prvKey
+
+--                putStrLn $ "r:       " ++ (show r)
+  --              putStrLn $ "s:       " ++ (show s)
+    --            putStrLn $ "v:       " ++ (show v)
+      --          putStrLn $ "theHash: " ++ (show theHash)
+
+                    
                 B.hPut h $ B.pack $ theHash ++ theSignature ++ [theType] ++ theData
                 --send s $ map w2c $ theHash ++ theSignature ++ theType ++ theData
                 --recv s 1024 >>= \msg -> putStrLn $ "Received " ++ msg

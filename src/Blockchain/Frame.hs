@@ -126,6 +126,9 @@ encryptAndPutFrame bytes = do
   
   headMAC <- updateEgressMac headCipher
 
+--  liftIO $ putStrLn $ "headCipher: " ++ (show headCipher)
+--  liftIO $ putStrLn $ "headMAC:    " ++ (show headMAC)
+  
   putBytes headCipher
   putBytes headMAC
 

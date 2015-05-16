@@ -31,21 +31,6 @@ theCurve = getCurveByName SEC_p256k1
 intToBytes::Integer->[Word8]
 intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 
-{-
-showPoint::Point->String
-showPoint (Point x y) =
-  "Point " ++ showHex x "" ++ " " ++ showHex y ""
-showPoint PointO = error "showPoint got value PointO, I don't know what to do here"
-
-hShowPoint::H.Point->String
-hShowPoint point =
-  "Point " ++ showHex x "" ++ " " ++ showHex y ""
-  where
-    x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
-    y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
--}
-
-
 bXor::B.ByteString->B.ByteString->B.ByteString
 bXor x y | B.length x == B.length y = B.pack $ B.zipWith xor x y
 bXor _ _ = error "bXor called with two ByteStrings of different length"
@@ -54,11 +39,12 @@ runEthCryptM::MonadIO m=>PrivateNumber->PublicPoint->String->PortNumber->EthCryp
 runEthCryptM myPriv otherPubKey ipAddress thePort f = do
   h <- liftIO $ connectTo ipAddress (PortNumber thePort)
 
-
+--  liftIO $ putStrLn $ "connected over tcp"
+  
   let myNonce = B.pack $ word256ToBytes 20 --TODO- Important!  Don't hardcode this
+
   handshakeInitBytes <- liftIO $ getHandshakeBytes myPriv otherPubKey myNonce
       
-
   liftIO $ B.hPut h handshakeInitBytes
 
   handshakeReplyBytes <- liftIO $ B.hGet h 210
@@ -68,6 +54,7 @@ runEthCryptM myPriv otherPubKey ipAddress thePort f = do
   
   let ackMsg = bytesToAckMsg $ B.unpack $ decryptECEIS myPriv replyECEISMsg
 
+--  liftIO $ putStrLn $ "ackMsg: " ++ show ackMsg
 ------------------------------
 
   let m_originated=False -- hardcoded for now, I can only connect as client
@@ -85,6 +72,20 @@ runEthCryptM myPriv otherPubKey ipAddress thePort f = do
 
       ingressCipher = if m_originated then handshakeInitBytes else handshakeReplyBytes
       egressCipher = if m_originated then handshakeReplyBytes else handshakeInitBytes
+
+  -- liftIO $ putStrLn $ "myNonce `add` otherNonce: " ++ show (myNonce `add` otherNonce)
+  -- liftIO $ putStrLn $ "myNonce `add` otherNonce `add` shared: " ++ show (myNonce `add` otherNonce `add` shared)
+  
+  -- liftIO $ putStrLn $ "otherNonce: " ++ show otherNonce
+
+  -- liftIO $ putStrLn $ "frameDecKey: " ++ show frameDecKey
+
+  -- liftIO $ putStrLn $ "shared: " ++ show shared'
+
+  -- liftIO $ putStrLn $ "ingressCipher: " ++ show ingressCipher
+  -- liftIO $ putStrLn $ "egressCipher: " ++ show egressCipher
+
+  -- liftIO $ putStrLn $ "macEncKey: " ++ show macEncKey
 
 
   let cState =

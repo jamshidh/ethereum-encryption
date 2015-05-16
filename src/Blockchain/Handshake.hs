@@ -4,7 +4,10 @@ module Blockchain.Handshake (
   AckMessage(..),
   getHandshakeBytes,
   bytesToAckMsg,
-  decryptECEIS
+  bytesToPoint,
+  decryptECEIS,
+  encryptECEIS,
+  ECEISMessage(..)
   ) where
 
 import Crypto.Cipher.AES
@@ -24,8 +27,7 @@ import qualified Network.Haskoin.Internals as H
 
 import Blockchain.ExtendedECDSA
 import Blockchain.ExtWord
-
---import Debug.Trace
+-- import Debug.Trace
 
 theCurve::Curve
 theCurve = getCurveByName SEC_p256k1
@@ -36,20 +38,6 @@ intToBytes x = map (fromIntegral . (x `shiftR`)) [256-8, 256-16..0]
 pointToBytes::Point->[Word8]
 pointToBytes (Point x y) = intToBytes x ++ intToBytes y
 pointToBytes PointO = error "pointToBytes got value PointO, I don't know what to do here"
-
-{-
-showPoint::Point->String
-showPoint (Point x y) =
-  "Point " ++ showHex x "" ++ " " ++ showHex y ""
-showPoint PointO = error "showPoint got value PointO, I don't know what to do here"
-
-hShowPoint::H.Point->String
-hShowPoint point =
-  "Point " ++ showHex x "" ++ " " ++ showHex y ""
-  where
-    x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
-    y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
--}
 
 ctr::[Word8]
 ctr=[0,0,0,1]
@@ -91,12 +79,21 @@ data ECEISMessage =
 
 instance Binary ECEISMessage where
   get = do
-    form <- getWord8
-    pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
-    pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
-    cipherIV <- getByteString 16
-    cipher <- getByteString 97
-    mac <- sequence $ replicate 32 getWord8
+    bs <- getRemainingLazyByteString
+    let bsStrict = BL.toStrict $ bs
+        length  =  B.length $ bsStrict
+        form = head . B.unpack $ bsStrict
+        pubKeyX =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 1 $ bsStrict
+        pubKeyY =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 33 $ bsStrict
+        cipherIV = B.take 16 $ B.drop 65 $ bsStrict
+        cipher = B.take (length - 113) $ B.drop 81 $ bsStrict
+        mac = B.unpack $ B.take 32 $ B.drop (length-32) bsStrict
+    -- form <- getWord8
+    -- pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
+    -- pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
+    -- cipherIV <- getByteString 16
+    -- cipher <- getByteString (length - (113))  
+    -- mac <- sequence $ replicate 32 getWord8
     return $ ECEISMessage form (Point pubKeyX pubKeyY) cipherIV cipher mac
 
   put (ECEISMessage form (Point pubKeyX pubKeyY) cipherIV cipher mac) = do
@@ -115,6 +112,32 @@ data AckMessage =
     ackKnownPeer::Bool
     } deriving (Show)
 
+
+knownPeer :: Word8 -> Bool
+knownPeer b =
+  case b of
+    0 -> False
+    1 -> True
+    _ -> error "byte is neither 0 nor 1"
+
+boolToWord8 :: Bool -> Word8
+boolToWord8 True = 1
+boolToWord8 False = 0
+
+
+instance Binary AckMessage where
+  get = do
+    point <- fmap (bytesToPoint . B.unpack) $ getByteString 64
+    nonce <- fmap (bytesToWord256 . B.unpack) $ getByteString 32                   
+    kp <- fmap (knownPeer . head . B.unpack) $ getByteString 1
+    return $ (AckMessage point nonce kp)
+    
+  put (AckMessage point nonce kp) = do
+    putByteString $ (B.pack . pointToBytes) $ point
+    putByteString (B.pack . word256ToBytes $ nonce)
+    putByteString (B.pack $ [(boolToWord8 kp)])
+  put x = error $ "unsupported case in call to put for AckMessage: " ++ show x
+    
 bytesToAckMsg::[Word8]->AckMessage
 bytesToAckMsg bytes | length bytes == 97 =
   AckMessage {
@@ -140,13 +163,17 @@ encryptECEIS myPrvKey otherPubKey cipherIV msg =
     eceisPubKey=calculatePublic theCurve myPrvKey,
     eceisCipherIV=cipherIV,
     eceisCipher=cipher,
-    eceisMac=hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) (B.unpack cipherWithIV)
+    eceisMac= --trace ("################### mkey: " ++ show mKey) $
+	--trace ("################### cipherWithIV: " ++ show cipherWithIV) $
+        hmac (HashMethod (B.unpack . hash . B.pack) 512) (B.unpack mKey) (B.unpack cipherWithIV)
     }
   where
-    SharedKey sharedKey = getShared theCurve myPrvKey otherPubKey
+    SharedKey sharedKey = --trace ("##################### sharedKey: " ++ show (getShared theCurve myPrvKey otherPubKey)) $
+                          getShared theCurve myPrvKey otherPubKey
     key = hash $ B.pack (ctr ++ intToBytes sharedKey ++ s1)
     eKey = B.take 16 key
-    mKeyMaterial = B.take 16 $ B.drop 16 key
+    mKeyMaterial = -- trace ("##################### sharedKey: " ++ show (B.take 16 $ B.drop 16 key)) $
+                   (B.take 16 $ B.drop 16 key)
     mKey = hash mKeyMaterial
     cipher = encrypt eKey cipherIV msg
     cipherWithIV = cipherIV `B.append` cipher
@@ -164,8 +191,13 @@ getHandshakeBytes myPriv otherPubKey myNonce = do
   let
     myPublic = calculatePublic theCurve myPriv
     SharedKey sharedKey = getShared theCurve myPriv otherPubKey
+   
     cipherIV = B.replicate 16 0 --TODO- Important!  Is this really supposed to be zero?
     msg = fromIntegral sharedKey `xor` (bytesToWord256 $ B.unpack myNonce)
+
+
+ --  putStrLn $ "sharedKey: " ++ show sharedKey
+  -- putStrLn $ "msg:       " ++ show msg
   sig <- H.withSource H.devURandom $ extSignMsg msg (H.PrvKey $ fromIntegral myPriv)
   let
     ephemeral = getPubKeyFromSignature sig msg
@@ -176,8 +208,20 @@ getHandshakeBytes myPriv otherPubKey myNonce = do
                 pubk `B.append`
                 myNonce `B.append`
                 B.singleton 0
+  -- putStrLn $ "ephemeral: " ++ show ephemeral
+  -- putStrLn $ "hepubk: " ++ show hepubk
+  -- putStrLn $ "pubk: " ++ show pubk
+  -- putStrLn $ "theData: " ++ show theData
 
+  let eceisMsg = encryptECEIS myPriv otherPubKey cipherIV theData 
+  let eceisMsgBytes = BL.toStrict $ encode eceisMsg
+  
+  -- putStrLn $ "eceisMsg: "
+  -- putStrLn $ show eceisMsg
 
-  return $ BL.toStrict $ encode $ encryptECEIS myPriv otherPubKey cipherIV theData 
+  -- putStrLn $ "length ciphertext: " ++ (show . B.length $ eceisCipher eceisMsg)
+  -- putStrLn $ "length of wire message: " ++ (show . B.length $ eceisMsgBytes)
+  
+  return $ eceisMsgBytes
 
 

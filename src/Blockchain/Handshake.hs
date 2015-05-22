@@ -5,6 +5,7 @@ module Blockchain.Handshake (
   getHandshakeBytes,
   bytesToAckMsg,
   bytesToPoint,
+  pointToBytes,
   decryptECEIS,
   encryptECEIS,
   ECEISMessage(..)

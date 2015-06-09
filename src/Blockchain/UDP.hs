@@ -53,10 +53,6 @@ encrypt::H.PrvKey->Word256->H.SecretT IO ExtendedSignature
 encrypt prvKey' theHash = do
   extSignMsg theHash prvKey'
 
-
-prvKey::H.PrvKey
-Just prvKey = H.makePrvKey 0xac3e8ce2ef31c3f45d5da860bcd9aee4b37a05c5a3ddee40dd061620c3dab380
-
 data RawNodeDiscoveryPacket =
   RawNDPacket SHA ExtendedSignature Integer RLPObject deriving (Show)
 
@@ -175,8 +171,8 @@ pubKeyToNodeID (H.PubKey point) =
 pubKeyToNodeID (H.PubKeyU _) = error "Missing case in pubKeyToNodeId: PubKeyU"
 -}
 
-getServerPubKey::String->PortNumber->IO Point
-getServerPubKey domain port = do
+getServerPubKey::H.PrvKey->String->PortNumber->IO Point
+getServerPubKey myPriv domain port = do
 
   --let theCurve = getCurveByName Crypto.Types.PubKey.ECC.SEC_p256k1
 
@@ -192,7 +188,7 @@ getServerPubKey domain port = do
 
   --print $ pointToBytes pubKey
 
-  withSocketsDo $ bracket getSocket hClose (talk prvKey)
+  withSocketsDo $ bracket getSocket hClose (talk myPriv)
         where getSocket = do
                 (serveraddr:_) <- getAddrInfo Nothing (Just domain) (Just $ show port)
                 s <- socket (addrFamily serveraddr) Datagram defaultProtocol

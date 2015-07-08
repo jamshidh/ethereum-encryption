@@ -88,5 +88,8 @@ getPubKeyFromSignature (ExtendedSignature sig yIsOdd) msgHash =
     r = sigR sig
     s = sigS sig
     ys = quadraticResidue $ fromIntegral r^(3::Integer)+7
-    correctY = if odd (head ys) == yIsOdd then head ys else ys !! 1
+    correctY =
+      case ys of
+           (firstY:secondY:_) -> if odd firstY == yIsOdd then firstY else secondY
+           _ -> error "quadraticResidue didn't return two values"
     Just bigR = makePoint (fromIntegral r) correctY

@@ -83,7 +83,8 @@ instance Binary ECEISMessage where
     bs <- getRemainingLazyByteString
     let bsStrict = BL.toStrict $ bs
         length  =  B.length $ bsStrict
-        form = head . B.unpack $ bsStrict
+        form = errorHead "bsStrict is null" $ 
+               B.unpack $ bsStrict
         pubKeyX =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 1 $ bsStrict
         pubKeyY =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 33 $ bsStrict
         cipherIV = B.take 16 $ B.drop 65 $ bsStrict
@@ -125,12 +126,15 @@ boolToWord8 :: Bool -> Word8
 boolToWord8 True = 1
 boolToWord8 False = 0
 
+errorHead::String->[a]->a
+errorHead _ (x:_) = x
+errorHead msg _ = error msg
 
 instance Binary AckMessage where
   get = do
     point <- fmap (bytesToPoint . B.unpack) $ getByteString 64
     nonce <- fmap (bytesToWord256 . B.unpack) $ getByteString 32                   
-    kp <- fmap (knownPeer . head . B.unpack) $ getByteString 1
+    kp <- fmap (knownPeer . errorHead "head error in instance Binary AckMessage" . B.unpack) $ getByteString 1
     return $ (AckMessage point nonce kp)
     
   put (AckMessage point nonce kp) = do

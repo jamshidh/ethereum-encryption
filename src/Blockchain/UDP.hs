@@ -143,7 +143,7 @@ processDataStream'
   let SHA messageHash = hash $ B.pack $ [theType] ++ B.unpack (rlpSerialize rlp)
       publicKey = getPubKeyFromSignature signature messageHash  
 
-  return publicKey
+  return $ fromMaybe (error "malformed signature in call to processDataStream") $ publicKey
 
 processDataStream' _ = error "processDataStream' called with too few bytes"
 

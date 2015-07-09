@@ -81,15 +81,17 @@ extSignMsg h d = do
 
 -------------------
 
-getPubKeyFromSignature::ExtendedSignature->Word256->PubKey
+getPubKeyFromSignature::ExtendedSignature->Word256->Maybe PubKey
 getPubKeyFromSignature (ExtendedSignature sig yIsOdd) msgHash = 
-  PubKey $ ((s / r) `mulPoint` bigR) `addPoint` ((fromIntegral curveN - fromIntegral msgHash/r) `mulPoint` curveG)
+  case ys of
+    (firstY:secondY:_) ->
+      let
+        correctY = if odd firstY == yIsOdd then firstY else secondY
+        Just bigR = makePoint (fromIntegral r) correctY
+
+      in Just $ PubKey $ ((s / r) `mulPoint` bigR) `addPoint` ((fromIntegral curveN - fromIntegral msgHash/r) `mulPoint` curveG)
+    _ -> Nothing
   where
     r = sigR sig
     s = sigS sig
     ys = quadraticResidue $ fromIntegral r^(3::Integer)+7
-    correctY =
-      case ys of
-           (firstY:secondY:_) -> if odd firstY == yIsOdd then firstY else secondY
-           _ -> error "quadraticResidue didn't return two values"
-    Just bigR = makePoint (fromIntegral r) correctY

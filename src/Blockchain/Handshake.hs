@@ -205,7 +205,9 @@ getHandshakeBytes myPriv otherPubKey myNonce = do
   -- putStrLn $ "msg:       " ++ show msg
   sig <- H.withSource H.devURandom $ extSignMsg msg (H.PrvKey $ fromIntegral myPriv)
   let
-    ephemeral = getPubKeyFromSignature sig msg
+    ephemeral =
+      fromMaybe (error "malformed signature given to call getHandshakeBytes") $
+      getPubKeyFromSignature sig msg  
     hepubk = SHA3.hash 256 $ B.pack $ pubKeyToBytes ephemeral
     pubk = B.pack $ pointToBytes myPublic
     theData = B.pack (sigToBytes sig) `B.append`

@@ -82,14 +82,14 @@ instance Binary ECEISMessage where
   get = do
     bs <- getRemainingLazyByteString
     let bsStrict = BL.toStrict $ bs
-        length  =  B.length $ bsStrict
+        theLength  =  B.length $ bsStrict
         form = errorHead "bsStrict is null" $ 
                B.unpack $ bsStrict
         pubKeyX =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 1 $ bsStrict
         pubKeyY =  toInteger . bytesToWord256 . B.unpack $ B.take 32 $ B.drop 33 $ bsStrict
         cipherIV = B.take 16 $ B.drop 65 $ bsStrict
-        cipher = B.take (length - 113) $ B.drop 81 $ bsStrict
-        mac = B.unpack $ B.take 32 $ B.drop (length-32) bsStrict
+        cipher = B.take (theLength - 113) $ B.drop 81 $ bsStrict
+        mac = B.unpack $ B.take 32 $ B.drop (theLength-32) bsStrict
     -- form <- getWord8
     -- pubKeyX <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
     -- pubKeyY <- fmap (toInteger . bytesToWord256 . B.unpack) $ getByteString 32
@@ -141,7 +141,6 @@ instance Binary AckMessage where
     putByteString $ (B.pack . pointToBytes) $ point
     putByteString (B.pack . word256ToBytes $ nonce)
     putByteString (B.pack $ [(boolToWord8 kp)])
-  put x = error $ "unsupported case in call to put for AckMessage: " ++ show x
     
 bytesToAckMsg::[Word8]->AckMessage
 bytesToAckMsg bytes | length bytes == 97 =

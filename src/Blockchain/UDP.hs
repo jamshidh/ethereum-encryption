@@ -24,7 +24,6 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Maybe
 import GHC.IO.IOMode
 import qualified Network.Haskoin.Internals as H
-import Numeric
 import System.IO
 --import Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -104,14 +103,19 @@ ndPacketToRLP (Pong (Endpoint ipFrom udpPortFrom tcpPortFrom) tok expiration) = 
 --showPoint::H.Point->String
 --showPoint (H.Point x y) = "Point 0x" ++ showHex x "" ++ " 0x" ++ showHex y ""
 
+{-
 showPubKey::H.PubKey->String
 showPubKey (H.PubKey point) =
   "Point 0x" ++ showHex x "" ++ " 0x" ++ showHex y ""
   where
     x = fromMaybe (error "getX failed in prvKey2Address") $ H.getX point
     y = fromMaybe (error "getY failed in prvKey2Address") $ H.getY point
-    
+  
 showPubKey (H.PubKeyU _) = error "Missing case in showPubKey: PubKeyU"
+-}  
+
+ndPacketToRLP _ = error "Unsupported case in call to ndPacketToRLP"
+
 
 processDataStream'::[Word8]->IO H.PubKey
 processDataStream'
